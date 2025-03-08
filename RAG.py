@@ -6,6 +6,11 @@ from langchain_core.tools import tool
 
 @tool
 def retrieve_context(query: str):
+    """
+    Retrieve matching context from Arxiv
+    :param query:
+    :return:
+    """
     loader = ArxivLoader(query=query, load_max_docs=3)
     docs = loader.load()
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=100, chunk_overlap=50)
