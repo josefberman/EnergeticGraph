@@ -258,19 +258,19 @@ def train_data(energetic_property: str):
     # X_test = pca.transform(X_test)
     # param_grid = {"alpha": np.logspace(-10, 2, 50), "gamma": np.logspace(-10, -1, 50), "kernel": ['rbf']}
     # grd_srch = GridSearchCV(KernelRidge(), param_grid, cv=5, scoring='neg_mean_square_error', verbose=0)
-    param_grid = {'n_estimators':np.linspace(50,500,10, dtype=int),'max_features':['sqrt','log2',1]}
+    param_grid = {'n_estimators': np.linspace(50, 500, 10, dtype=int), 'max_features': ['sqrt', 'log2', 1]}
     grd_srch = GridSearchCV(RandomForestRegressor(), param_grid, cv=5, scoring='neg_mean_squared_error', verbose=0)
     grd_srch.fit(X_train, y_train)
     best_model = grd_srch.best_estimator_
     with open(f'./trained_models/{energetic_property}.pkl', 'wb') as f:
         pickle.dump(best_model, f)
-    for param_name, param_value in grd_srch.best_params_.items():
-        print(f'{param_name} : {param_value}')
-    print('train r2 score:', r2_score(y_train, best_model.predict(X_train)))
-    print('test r2 score:', r2_score(y_test, best_model.predict(X_test)))
-    print('test rmse:', root_mean_squared_error(y_test, best_model.predict(X_test)))
-    print('test rrmse:', root_mean_squared_error(y_test, best_model.predict(X_test)) / y_train_mean)
-    print('test mae:', mean_absolute_error(y_test, best_model.predict(X_test)))
+    # for param_name, param_value in grd_srch.best_params_.items():
+        # print(f'{param_name} : {param_value}')
+    # print('train r2 score:', r2_score(y_train, best_model.predict(X_train)))
+    # print('test r2 score:', r2_score(y_test, best_model.predict(X_test)))
+    # print('test rmse:', root_mean_squared_error(y_test, best_model.predict(X_test)))
+    # print('test rrmse:', root_mean_squared_error(y_test, best_model.predict(X_test)) / y_train_mean)
+    # print('test mae:', mean_absolute_error(y_test, best_model.predict(X_test)))
     plt.figure(figsize=(5, 5))
     y_pred = best_model.predict(X_test)
     plt.scatter(y_test, y_pred, s=5, c='#e63946')
@@ -280,7 +280,7 @@ def train_data(energetic_property: str):
     plt.ylabel('Predicted values')
     plt.title(energetic_property, fontweight='bold')
     plt.tight_layout()
-    plt.savefig(f'{energetic_property}.jpg', dpi=200)
+    plt.savefig(f'./trained_models_plots/{energetic_property}.jpg', dpi=200)
     plt.show()
 
 
@@ -310,13 +310,32 @@ def train_data2(energetic_property: str):
     best_model = grd_srch.best_estimator_
     with open(f'./trained_models/{energetic_property}.pkl', 'wb') as f:
         pickle.dump(best_model, f)
-    for param_name, param_value in grd_srch.best_params_.items():
-        print(f'{param_name} : {param_value}')
-    print('train r2 score:', r2_score(y_train, best_model.predict(X_train)))
-    print('test r2 score:', r2_score(y_test, best_model.predict(X_test)))
-    print('test rmse:', root_mean_squared_error(y_test, best_model.predict(X_test)))
-    print('test rrmse:', root_mean_squared_error(y_test, best_model.predict(X_test)) / y_train_mean)
-    print('test mae:', mean_absolute_error(y_test, best_model.predict(X_test)))
+    # for param_name, param_value in grd_srch.best_params_.items():
+    #     print(f'{param_name} : {param_value}')
+    # print('train r2 score:', r2_score(y_train, best_model.predict(X_train)))
+    # print('test r2 score:', r2_score(y_test, best_model.predict(X_test)))
+    # print('test rmse:', root_mean_squared_error(y_test, best_model.predict(X_test)))
+    # print('test rrmse:', root_mean_squared_error(y_test, best_model.predict(X_test)) / y_train_mean)
+    # print('test mae:', mean_absolute_error(y_test, best_model.predict(X_test)))
+    plt.figure(figsize=(5, 5))
+    y_pred = best_model.predict(X_test)
+    plt.scatter(y_test, y_pred, s=5, c='#e63946')
+    plt.plot([np.min([y_test, y_pred]), np.max([y_test, y_pred])], [np.min([y_test, y_pred]), np.max([y_test, y_pred])],
+             c='black', linewidth=1)
+    plt.xlabel('Test values')
+    plt.ylabel('Predicted values')
+    plt.title(energetic_property, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(f'./trained_models_plots/{energetic_property}.jpg', dpi=200)
+    plt.show()
+
+
+def train_all_models():
+    properties = ['density', 'gas phase formation enthalpy', 'sublimation enthalpy', 'heat of explosion',
+                  'detonation velocity', 'detonation pressure', 'gurney energy', 'h50']
+    for p in properties:
+        train_data2(p)
+
 
 @tool
 def predict_properties(smiles: str) -> dict:

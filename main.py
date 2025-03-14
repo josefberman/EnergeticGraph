@@ -1,19 +1,24 @@
 from typing import Literal
-from langchain_core.messages import HumanMessage, AIMessage
-from langchain_nvidia_ai_endpoints.chat_models import ChatNVIDIA
-from langchain_core.tools import tool
+from langchain_core.messages import HumanMessage
+from langchain_openai.chat_models import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph, MessagesState
 from langgraph.prebuilt import ToolNode
 from RAG import retrieve_context
-from prediction import predict_properties
+from prediction import predict_properties, train_all_models
 import os
 
-os.environ['NVIDIA_API_KEY'] = "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"
+os.environ['OPENAI_API_KEY'] = "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"
 
-model = ChatNVIDIA(model_name='meta/llama-3.3-70b-instruct', temperature=0).bind_tools(
-    [retrieve_context, predict_properties],
-    tool_choice='required')
+if not os.path.exists('./trained_models/'):
+    os.makedirs('./trained_models/')
+if not os.path.exists('./trained_models_plots/'):
+    os.makedirs('./trained_models_plots/')
+if not os.listdir('./trained_models/'):
+    train_all_models()
+
+
+model = ChatOpenAI(model='gpt-4o', temperature=0).bind_tools([retrieve_context, predict_properties])
 
 
 def call_model(state: MessagesState):
@@ -40,10 +45,11 @@ app = workflow.compile(checkpointer=checkpointer)
 
 prompt = (
     """You are an expert explosives chemist, and you are given a tool """
-    """for retrieving relevant papers from arXive, and a tool for predicting energetic material properties. """
-    """You are given a query related to energetic materials and must first use one of the tools before """
-    """incorporating your answer. When using the retrieval tool, always give a source to your answer."""
-    """Answer shortly and on-point."""
+    """for retrieving relevant papers from arXiv, and a tool for predicting energetic material properties. """
+    """You are given a query related to energetic materials and must first use the tools before """
+    """incorporating your answer. When using the retrieval tool, convert the query to a search term and """
+    """always give a source to your answer. If you don't find an answer in arXiv, use the prediction tool by """
+    """converting the material's name in the query to a SMILES representation. Answer shortly and on-point."""
 )
 query = input('Enter query: ')
 states = app.invoke({'messages': [HumanMessage(content=prompt), HumanMessage(content=query)]},
