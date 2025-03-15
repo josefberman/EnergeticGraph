@@ -265,7 +265,7 @@ def train_data(energetic_property: str):
     with open(f'./trained_models/{energetic_property}.pkl', 'wb') as f:
         pickle.dump(best_model, f)
     # for param_name, param_value in grd_srch.best_params_.items():
-        # print(f'{param_name} : {param_value}')
+    # print(f'{param_name} : {param_value}')
     # print('train r2 score:', r2_score(y_train, best_model.predict(X_train)))
     # print('test r2 score:', r2_score(y_test, best_model.predict(X_test)))
     # print('test rmse:', root_mean_squared_error(y_test, best_model.predict(X_test)))
@@ -304,8 +304,10 @@ def train_data2(energetic_property: str):
     # pca = PCA(n_components=4)
     # X_train = pca.fit_transform(X_train)
     # X_test = pca.transform(X_test)
-    param_grid = {"alpha": np.logspace(-10, 2, 50), "gamma": np.logspace(-10, -1, 50), "kernel": ['rbf']}
-    grd_srch = GridSearchCV(KernelRidge(), param_grid, cv=5, scoring='neg_mean_absolute_error', verbose=0)
+    # param_grid = {"alpha": np.logspace(-10, 2, 50), "gamma": np.logspace(-10, -1, 50), "kernel": ['rbf']}
+    # grd_srch = GridSearchCV(KernelRidge(), param_grid, cv=5, scoring='neg_mean_absolute_error', verbose=0)
+    param_grid = {'n_estimators': np.linspace(50, 500, 10, dtype=int), 'max_features': ['sqrt', 'log2', 1]}
+    grd_srch = GridSearchCV(RandomForestRegressor(), param_grid, cv=10, scoring='neg_mean_squared_error', verbose=0)
     grd_srch.fit(X_train, y_train)
     best_model = grd_srch.best_estimator_
     with open(f'./trained_models/{energetic_property}.pkl', 'wb') as f:
