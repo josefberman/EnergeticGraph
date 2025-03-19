@@ -238,105 +238,145 @@ def create_descriptor(smiles: str):
             ]
 
 
-def train_data(energetic_property: str):
-    if not os.path.exists('./trained_models/'):
-        os.makedirs('./trained_models/')
-    df = pd.read_excel('clean_data_imputed.xlsx')
-    df.dropna(inplace=True)
-    X = df.iloc[:, :20]
-    property_dict = {'density': 20, 'gas phase formation enthalpy': 21, 'sublimation enthalpy': 22,
-                     'heat of explosion': 23, 'detonation velocity': 24, 'detonation pressure': 25,
-                     'gurney energy': 26, 'h50': 27}
-    y = df.iloc[:, property_dict[energetic_property]]
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=42)
-    y_train_mean = np.mean(y_train)
-    s_scaler = StandardScaler()
-    X_train = s_scaler.fit_transform(X_train)
-    X_test = s_scaler.transform(X_test)
-    # pca = PCA(n_components=4)
-    # X_train = pca.fit_transform(X_train)
-    # X_test = pca.transform(X_test)
-    # param_grid = {"alpha": np.logspace(-10, 2, 50), "gamma": np.logspace(-10, -1, 50), "kernel": ['rbf']}
-    # grd_srch = GridSearchCV(KernelRidge(), param_grid, cv=5, scoring='neg_mean_square_error', verbose=0)
-    param_grid = {'n_estimators': np.linspace(50, 500, 10, dtype=int), 'max_features': ['sqrt', 'log2', 1]}
-    grd_srch = GridSearchCV(RandomForestRegressor(), param_grid, cv=5, scoring='neg_mean_squared_error', verbose=0)
-    grd_srch.fit(X_train, y_train)
-    best_model = grd_srch.best_estimator_
-    with open(f'./trained_models/{energetic_property}.pkl', 'wb') as f:
-        pickle.dump(best_model, f)
-    # for param_name, param_value in grd_srch.best_params_.items():
-    # print(f'{param_name} : {param_value}')
-    # print('train r2 score:', r2_score(y_train, best_model.predict(X_train)))
-    # print('test r2 score:', r2_score(y_test, best_model.predict(X_test)))
-    # print('test rmse:', root_mean_squared_error(y_test, best_model.predict(X_test)))
-    # print('test rrmse:', root_mean_squared_error(y_test, best_model.predict(X_test)) / y_train_mean)
-    # print('test mae:', mean_absolute_error(y_test, best_model.predict(X_test)))
-    plt.figure(figsize=(5, 5))
-    y_pred = best_model.predict(X_test)
-    plt.scatter(y_test, y_pred, s=5, c='#e63946')
-    plt.plot([np.min([y_test, y_pred]), np.max([y_test, y_pred])], [np.min([y_test, y_pred]), np.max([y_test, y_pred])],
-             c='black', linewidth=1)
-    plt.xlabel('Test values')
-    plt.ylabel('Predicted values')
-    plt.title(energetic_property, fontweight='bold')
-    plt.tight_layout()
-    plt.savefig(f'./trained_models_plots/{energetic_property}.jpg', dpi=200)
-    plt.show()
+def train_data(df: pd.DataFrame):
+    df['desc'] = df['SMILES'].apply(create_descriptor)
+    X = np.array(df['desc'].tolist())
+    for col in df.iloc[:, :-2].columns:
+        y = df[col]
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=42)
+        y_train_mean = np.mean(y_train)
+        # param_grid = {"alpha": np.logspace(-10, 2, 50), "gamma": np.logspace(-10, -1, 50), "kernel": ['rbf']}
+        # grd_srch = GridSearchCV(KernelRidge(), param_grid, cv=5, scoring='neg_mean_squared_error', verbose=0)
+        # param_grid = {'n_estimators': np.linspace(50, 500, 10, dtype=int), 'max_features': ['sqrt', 'log2', 1]}
+        # grd_srch = GridSearchCV(RandomForestRegressor(), param_grid, cv=5, scoring='neg_mean_squared_error', verbose=0)
+        # param_grid = {'n_neighbors':np.arange(2,10,1)}
+        # grd_srch = GridSearchCV(KNeighborsRegressor(), param_grid, cv=5, scoring='neg_mean_squared_error', verbose=0)
+        param_grid = {'kernel': ['linear', 'poly', 'rbf'], 'degree': [2, 3, 4], 'C': np.logspace(-3, 2, 10),
+                      'epsilon': np.logspace(-3, 2, 10)}
+        grd_srch = GridSearchCV(SVR(), param_grid, cv=5, scoring='neg_mean_squared_error', verbose=0)
+        grd_srch.fit(X_train, y_train)
+        best_model = grd_srch.best_estimator_
+        with open(f'./trained_models/{col}.pkl', 'wb') as f:
+            pickle.dump(best_model, f)
+        plt.figure(figsize=(5, 5))
+        y_pred = best_model.predict(X_test)
+        print(col)
+        print(f'  train r2 score: {r2_score(y_train, best_model.predict(X_train)):.4f}')
+        print(f'  test r2 score: {r2_score(y_test, best_model.predict(X_test)):.4f}')
+        print(f'  test rmse: {root_mean_squared_error(y_test, best_model.predict(X_test)):.4f}')
+        print(f'  test rrmse: {root_mean_squared_error(y_test, best_model.predict(X_test)) / y_train_mean:.4f}')
+        print(f'  test mae: {mean_absolute_error(y_test, best_model.predict(X_test)):.4f}')
+        plt.scatter(y_test, y_pred, s=5, c='#e63946')
+        plt.plot([np.min([y_test, y_pred]), np.max([y_test, y_pred])],
+                 [np.min([y_test, y_pred]), np.max([y_test, y_pred])],
+                 c='black', linewidth=1)
+        plt.xlabel('Test values')
+        plt.ylabel('Predicted values')
+        plt.title(col, fontweight='bold')
+        plt.tight_layout()
+        plt.savefig(f'./trained_models_plots/{col}.jpg', dpi=200)
+        plt.show()
 
 
-def train_data2(energetic_property: str):
-    if not os.path.exists('./trained_models/'):
-        os.makedirs('./trained_models/')
-    df = pd.read_excel('clean_data_imputed.xlsx')
-    df.dropna(inplace=True)
-    df['mol'] = df['SMILES'].apply(lambda x: Chem.MolFromSmiles(x))
-    df['new_desc'] = df['mol'].apply(lambda x: custom_descriptor_set(x))
-    X = pd.DataFrame(df['new_desc'].tolist())
-    property_dict = {'density': 20, 'gas phase formation enthalpy': 21, 'sublimation enthalpy': 22,
-                     'heat of explosion': 23, 'detonation velocity': 24, 'detonation pressure': 25,
-                     'gurney energy': 26, 'h50': 27}
-    y = df.iloc[:, property_dict[energetic_property]]
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=42)
-    y_train_mean = np.mean(y_train)
-    s_scaler = StandardScaler()
-    X_train = s_scaler.fit_transform(X_train)
-    X_test = s_scaler.transform(X_test)
-    # pca = PCA(n_components=4)
-    # X_train = pca.fit_transform(X_train)
-    # X_test = pca.transform(X_test)
-    # param_grid = {"alpha": np.logspace(-10, 2, 50), "gamma": np.logspace(-10, -1, 50), "kernel": ['rbf']}
-    # grd_srch = GridSearchCV(KernelRidge(), param_grid, cv=5, scoring='neg_mean_absolute_error', verbose=0)
-    param_grid = {'n_estimators': np.linspace(50, 500, 10, dtype=int), 'max_features': ['sqrt', 'log2', 1]}
-    grd_srch = GridSearchCV(RandomForestRegressor(), param_grid, cv=10, scoring='neg_mean_squared_error', verbose=0)
-    grd_srch.fit(X_train, y_train)
-    best_model = grd_srch.best_estimator_
-    with open(f'./trained_models/{energetic_property}.pkl', 'wb') as f:
-        pickle.dump(best_model, f)
-    # for param_name, param_value in grd_srch.best_params_.items():
-    #     print(f'{param_name} : {param_value}')
-    # print('train r2 score:', r2_score(y_train, best_model.predict(X_train)))
-    # print('test r2 score:', r2_score(y_test, best_model.predict(X_test)))
-    # print('test rmse:', root_mean_squared_error(y_test, best_model.predict(X_test)))
-    # print('test rrmse:', root_mean_squared_error(y_test, best_model.predict(X_test)) / y_train_mean)
-    # print('test mae:', mean_absolute_error(y_test, best_model.predict(X_test)))
-    plt.figure(figsize=(5, 5))
-    y_pred = best_model.predict(X_test)
-    plt.scatter(y_test, y_pred, s=5, c='#e63946')
-    plt.plot([np.min([y_test, y_pred]), np.max([y_test, y_pred])], [np.min([y_test, y_pred]), np.max([y_test, y_pred])],
-             c='black', linewidth=1)
-    plt.xlabel('Test values')
-    plt.ylabel('Predicted values')
-    plt.title(energetic_property, fontweight='bold')
-    plt.tight_layout()
-    plt.savefig(f'./trained_models_plots/{energetic_property}.jpg', dpi=200)
-    plt.show()
+# def train_data(energetic_property: str):
+#     if not os.path.exists('./trained_models/'):
+#         os.makedirs('./trained_models/')
+#     df = pd.read_excel('clean_data_imputed.xlsx')
+#     df.dropna(inplace=True)
+#     X = df.iloc[:, :20]
+#     property_dict = {'density': 20, 'gas phase formation enthalpy': 21, 'sublimation enthalpy': 22,
+#                      'heat of explosion': 23, 'detonation velocity': 24, 'detonation pressure': 25,
+#                      'gurney energy': 26, 'h50': 27}
+#     y = df.iloc[:, property_dict[energetic_property]]
+#     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=42)
+#     y_train_mean = np.mean(y_train)
+#     s_scaler = StandardScaler()
+#     X_train = s_scaler.fit_transform(X_train)
+#     X_test = s_scaler.transform(X_test)
+#     # pca = PCA(n_components=4)
+#     # X_train = pca.fit_transform(X_train)
+#     # X_test = pca.transform(X_test)
+#     # param_grid = {"alpha": np.logspace(-10, 2, 50), "gamma": np.logspace(-10, -1, 50), "kernel": ['rbf']}
+#     # grd_srch = GridSearchCV(KernelRidge(), param_grid, cv=5, scoring='neg_mean_square_error', verbose=0)
+#     param_grid = {'n_estimators': np.linspace(50, 500, 10, dtype=int), 'max_features': ['sqrt', 'log2', 1]}
+#     grd_srch = GridSearchCV(RandomForestRegressor(), param_grid, cv=5, scoring='neg_mean_squared_error', verbose=0)
+#     grd_srch.fit(X_train, y_train)
+#     best_model = grd_srch.best_estimator_
+#     with open(f'./trained_models/{energetic_property}.pkl', 'wb') as f:
+#         pickle.dump(best_model, f)
+#     # for param_name, param_value in grd_srch.best_params_.items():
+#     # print(f'{param_name} : {param_value}')
+#     # print('train r2 score:', r2_score(y_train, best_model.predict(X_train)))
+#     # print('test r2 score:', r2_score(y_test, best_model.predict(X_test)))
+#     # print('test rmse:', root_mean_squared_error(y_test, best_model.predict(X_test)))
+#     # print('test rrmse:', root_mean_squared_error(y_test, best_model.predict(X_test)) / y_train_mean)
+#     # print('test mae:', mean_absolute_error(y_test, best_model.predict(X_test)))
+#     plt.figure(figsize=(5, 5))
+#     y_pred = best_model.predict(X_test)
+#     plt.scatter(y_test, y_pred, s=5, c='#e63946')
+#     plt.plot([np.min([y_test, y_pred]), np.max([y_test, y_pred])], [np.min([y_test, y_pred]), np.max([y_test, y_pred])],
+#              c='black', linewidth=1)
+#     plt.xlabel('Test values')
+#     plt.ylabel('Predicted values')
+#     plt.title(energetic_property, fontweight='bold')
+#     plt.tight_layout()
+#     plt.savefig(f'./trained_models_plots/{energetic_property}.jpg', dpi=200)
+#     plt.show()
+#
+#
+# def train_data2(energetic_property: str):
+#     if not os.path.exists('./trained_models/'):
+#         os.makedirs('./trained_models/')
+#     df = pd.read_excel('clean_data_imputed.xlsx')
+#     df.dropna(inplace=True)
+#     df['mol'] = df['SMILES'].apply(lambda x: Chem.MolFromSmiles(x))
+#     df['new_desc'] = df['mol'].apply(lambda x: custom_descriptor_set(x))
+#     X = pd.DataFrame(df['new_desc'].tolist())
+#     property_dict = {'density': 20, 'gas phase formation enthalpy': 21, 'sublimation enthalpy': 22,
+#                      'heat of explosion': 23, 'detonation velocity': 24, 'detonation pressure': 25,
+#                      'gurney energy': 26, 'h50': 27}
+#     y = df.iloc[:, property_dict[energetic_property]]
+#     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=42)
+#     y_train_mean = np.mean(y_train)
+#     s_scaler = StandardScaler()
+#     X_train = s_scaler.fit_transform(X_train)
+#     X_test = s_scaler.transform(X_test)
+#     # pca = PCA(n_components=4)
+#     # X_train = pca.fit_transform(X_train)
+#     # X_test = pca.transform(X_test)
+#     # param_grid = {"alpha": np.logspace(-10, 2, 50), "gamma": np.logspace(-10, -1, 50), "kernel": ['rbf']}
+#     # grd_srch = GridSearchCV(KernelRidge(), param_grid, cv=5, scoring='neg_mean_absolute_error', verbose=0)
+#     param_grid = {'n_estimators': np.linspace(50, 500, 10, dtype=int), 'max_features': ['sqrt', 'log2', 1]}
+#     grd_srch = GridSearchCV(RandomForestRegressor(), param_grid, cv=10, scoring='neg_mean_squared_error', verbose=0)
+#     grd_srch.fit(X_train, y_train)
+#     best_model = grd_srch.best_estimator_
+#     with open(f'./trained_models/{energetic_property}.pkl', 'wb') as f:
+#         pickle.dump(best_model, f)
+#     # for param_name, param_value in grd_srch.best_params_.items():
+#     #     print(f'{param_name} : {param_value}')
+#     # print('train r2 score:', r2_score(y_train, best_model.predict(X_train)))
+#     # print('test r2 score:', r2_score(y_test, best_model.predict(X_test)))
+#     # print('test rmse:', root_mean_squared_error(y_test, best_model.predict(X_test)))
+#     # print('test rrmse:', root_mean_squared_error(y_test, best_model.predict(X_test)) / y_train_mean)
+#     # print('test mae:', mean_absolute_error(y_test, best_model.predict(X_test)))
+#     plt.figure(figsize=(5, 5))
+#     y_pred = best_model.predict(X_test)
+#     plt.scatter(y_test, y_pred, s=5, c='#e63946')
+#     plt.plot([np.min([y_test, y_pred]), np.max([y_test, y_pred])], [np.min([y_test, y_pred]), np.max([y_test, y_pred])],
+#              c='black', linewidth=1)
+#     plt.xlabel('Test values')
+#     plt.ylabel('Predicted values')
+#     plt.title(energetic_property, fontweight='bold')
+#     plt.tight_layout()
+#     plt.savefig(f'./trained_models_plots/{energetic_property}.jpg', dpi=200)
+#     plt.show()
 
 
-def train_all_models():
-    properties = ['density', 'gas phase formation enthalpy', 'sublimation enthalpy', 'heat of explosion',
-                  'detonation velocity', 'detonation pressure', 'gurney energy', 'h50']
-    for p in properties:
-        train_data2(p)
+# def train_all_models():
+#     properties = ['density', 'gas phase formation enthalpy', 'sublimation enthalpy', 'heat of explosion',
+#                   'detonation velocity', 'detonation pressure', 'gurney energy', 'h50']
+#     for p in properties:
+#         train_data2(p)
 
 
 @tool
@@ -361,27 +401,30 @@ def predict_properties(smiles: str) -> dict:
     return predictions
 
 
-def train_data_kernel_ridge(energetic_property: str):
-    df = pd.read_excel('clean_data.xlsx')
-    df.dropna(inplace=True)
-    X = df.iloc[:, :20]
-    property_dict = {'density': 20, 'gas phase formation enthalpy': 21, 'sublimation enthalpy': 22,
-                     'heat of explosion': 23, 'detonation velocity': 24, 'detonation pressure': 25,
-                     'gurney energy': 26, 'h50': 27}
-    y = df.iloc[:, property_dict[energetic_property]]
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=42)
-    y_train_mean = np.mean(y_train)
-    s_scaler = StandardScaler()
-    X_train = s_scaler.fit_transform(X_train)
-    X_test = s_scaler.transform(X_test)
-    param_grid = {'kernel': ['rbf', 'poly', 'linear'], 'alpha': np.logspace(-2, 2, 20, base=10),
-                  'gamma': np.logspace(-2, 2, 20, base=10),
-                  'degree': [1, 3, 5]}
-    grd_srch = GridSearchCV(KernelRidge(), param_grid, cv=10, scoring='r2')
-    grd_srch.fit(X_train, y_train)
-    best_model = grd_srch.best_estimator_
-    print(grd_srch.best_params_)
-    print('train r2 score:', r2_score(y_train, best_model.predict(X_train)))
-    print('test r2 score:', r2_score(y_test, best_model.predict(X_test)))
-    print('test rmse:', root_mean_squared_error(y_test, best_model.predict(X_test)))
-    print('test rrmse:', root_mean_squared_error(y_test, best_model.predict(X_test)) / y_train_mean)
+# def train_data_kernel_ridge(energetic_property: str):
+#     df = pd.read_excel('clean_data.xlsx')
+#     df.dropna(inplace=True)
+#     X = df.iloc[:, :20]
+#     property_dict = {'density': 20, 'gas phase formation enthalpy': 21, 'sublimation enthalpy': 22,
+#                      'heat of explosion': 23, 'detonation velocity': 24, 'detonation pressure': 25,
+#                      'gurney energy': 26, 'h50': 27}
+#     y = df.iloc[:, property_dict[energetic_property]]
+#     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=42)
+#     y_train_mean = np.mean(y_train)
+#     s_scaler = StandardScaler()
+#     X_train = s_scaler.fit_transform(X_train)
+#     X_test = s_scaler.transform(X_test)
+#     param_grid = {'kernel': ['rbf', 'poly', 'linear'], 'alpha': np.logspace(-2, 2, 20, base=10),
+#                   'gamma': np.logspace(-2, 2, 20, base=10),
+#                   'degree': [1, 3, 5]}
+#     grd_srch = GridSearchCV(KernelRidge(), param_grid, cv=10, scoring='r2')
+#     grd_srch.fit(X_train, y_train)
+#     best_model = grd_srch.best_estimator_
+#     print(grd_srch.best_params_)
+#     print('train r2 score:', r2_score(y_train, best_model.predict(X_train)))
+#     print('test r2 score:', r2_score(y_test, best_model.predict(X_test)))
+#     print('test rmse:', root_mean_squared_error(y_test, best_model.predict(X_test)))
+#     print('test rrmse:', root_mean_squared_error(y_test, best_model.predict(X_test)) / y_train_mean)
+
+df = pd.read_csv('extracted_chemical_data.csv')
+train_data(df)

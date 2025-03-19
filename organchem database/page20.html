@@ -1,0 +1,1227 @@
+
+
+<HTML>
+<HEAD>
+	
+<script type="text/javascript">
+function open_Crystal(s_id)
+{
+var href;
+		href="jsmol/crystal_mianyang.asp?s_id="+s_id;
+window.open(href,"_blank","toolbar=yes, location=yes, directories=no, status=no, menubar=yes, scrollbars=yes, resizable=no, copyhistory=yes, width=450, height=480")
+}
+
+function open_cif(s_id)
+{
+var href;
+		href="download_cif.asp?c_id="+s_id;
+window.open(href,"","toolbar=yes, location=yes, directories=no, status=no, menubar=yes, scrollbars=yes, resizable=no, copyhistory=yes, width=450, height=480")
+}
+
+function open_3D(s_id)
+{
+var href;
+		href="jsmol/lite3_mianyang.asp?s_id="+s_id;
+window.open(href,"_blank","toolbar=yes, location=yes, directories=no, status=no, menubar=yes, scrollbars=yes, resizable=no, copyhistory=yes, width=450, height=480")
+}
+
+function open_3Dmol(s_id)
+{
+var href;
+		href="download_mol.asp?s_id="+s_id;
+window.open(href,"","toolbar=yes, location=yes, directories=no, status=no, menubar=yes, scrollbars=yes, resizable=no, copyhistory=yes, width=450, height=680")
+}
+function open_Exp(s_id)
+{
+var href;
+		href="display_Experiment.asp?s_id="+s_id;
+window.open(href,"","toolbar=yes, location=yes, directories=no, status=no, menubar=yes, scrollbars=yes, resizable=no, copyhistory=yes, width=450, height=680")
+}
+</script>
+<script type="text/javascript">
+
+function ScrollPage(pageno)
+	{
+		document.formPage.pageno.value =pageno
+		document.formPage.submit();
+	}
+
+function searchsubstr(substance)
+	{	
+		var substance=substance;
+		var langstr=document.frmQuery.lang.value;
+		var refrence=document.frmQuery.refrence.value;
+		//var jqmh=document.frmQuery.jqmh.value;
+		
+		document.frmQuery.action="../mianyang/str_sub_query.asp";
+		document.frmQuery.substance.value=substance;
+		document.frmQuery.lang.value=langstr;
+		document.frmQuery.refrence.value=refrence;
+		//document.frmQuery.jqmh.value=jqmh;
+		document.frmQuery.submit();
+	//查找结构数据库
+	}	
+window.setTimeout 
+</script>
+<script type="text/javascript" language="javascript" src="jsme/jsme.nocache.js"></script>
+
+<Link Rel=stylesheet type=text/css HREF="includes/result_design.css">
+<Link Rel=stylesheet type=text/css HREF="includes/style.css">
+</head>
+<BODY bgproperties="fixed">
+<div align=left>
+
+
+<div align=center>
+	当前显示<b> 200 </b>个物质构象(最多200个)：<!--<a href=Energy_id_dl.asp?Conf_id=>导出结果</a>-->
+</div>
+	<form name=frmQuery action="Energy_id.asp" method=post >
+	<input type="hidden" name="refrence" value="sub">
+	<input type="hidden" name="page" value="10">
+	<input type="hidden" name="lang" value="">
+	<input type="hidden" name="substance"  >
+	
+		
+<table class=newform bordercolor="#BFBDDF" border="1"  cellspacing=0  align=center>
+<tr bgcolor=#edf0f5>
+		<td bgcolor=#ffffff align=center><b>序号</b></td>
+		<!--<td bgcolor=#ffffff align=center><b>物质编号</b></td>-->
+		<td bgcolor=#ffffff align=center><b>化合物结构</b></td>
+
+		
+						<td bgcolor=#ffffff align=center>
+							<table style="border:none" cellspacing=0  >
+								<tr>
+									<td>
+										<b>密度[g/cm<sup>3</sup>]</b>
+									</td>
+									
+									<td>
+										
+										<a href="Energy_id.asp?conf_id=&sortflag=Density&lang="><img src=images/rise.jpg></a>
+										<a href="Energy_id.asp?conf_id=&sortflag=Density&sortf1=desc&lang=" ><img src=images/descend.jpg></a>
+									</td>
+									
+								</tr>
+							</table>
+							
+						</td>
+						
+						<td bgcolor=#ffffff align=center>
+							<table style="border:none" cellspacing=0  >
+								<tr>
+									<td>
+										<b>爆速[m/s]</b>
+									</td>
+									
+									<td>
+										
+										<a href="Energy_id.asp?conf_id=&sortflag=Velocity&lang="><img src=images/rise.jpg></a>
+										<a href="Energy_id.asp?conf_id=&sortflag=Velocity&sortf1=desc&lang=" ><img src=images/descend.jpg></a>
+									</td>
+									
+								</tr>
+							</table>
+							
+						</td>
+						
+						<td bgcolor=#ffffff align=center>
+							<table style="border:none" cellspacing=0  >
+								<tr>
+									<td>
+										<b>爆压[GPa]</b>
+									</td>
+									
+									<td>
+										
+										<a href="Energy_id.asp?conf_id=&sortflag=Pressure&lang="><img src=images/rise.jpg></a>
+										<a href="Energy_id.asp?conf_id=&sortflag=Pressure&sortf1=desc&lang=" ><img src=images/descend.jpg></a>
+									</td>
+									
+								</tr>
+							</table>
+							
+						</td>
+						
+						<td bgcolor=#ffffff align=center>
+							<table style="border:none" cellspacing=0  >
+								<tr>
+									<td>
+										<b>爆热[KJ/mol]</b>
+									</td>
+									
+									<td>
+										
+										<a href="Energy_id.asp?conf_id=&sortflag=Temperature&lang="><img src=images/rise.jpg></a>
+										<a href="Energy_id.asp?conf_id=&sortflag=Temperature&sortf1=desc&lang=" ><img src=images/descend.jpg></a>
+									</td>
+									
+								</tr>
+							</table>
+							
+						</td>
+						
+						<td bgcolor=#ffffff align=center>
+							<table style="border:none" cellspacing=0  >
+								<tr>
+									<td>
+										<b>爆容[L]</b>
+									</td>
+									
+									<td>
+										
+										<a href="Energy_id.asp?conf_id=&sortflag=Volume&lang="><img src=images/rise.jpg></a>
+										<a href="Energy_id.asp?conf_id=&sortflag=Volume&sortf1=desc&lang=" ><img src=images/descend.jpg></a>
+									</td>
+									
+								</tr>
+							</table>
+							
+						</td>
+						
+						<td bgcolor=#ffffff align=center>
+							<table style="border:none" cellspacing=0  >
+								<tr>
+									<td>
+										<b>固相生成焓[KJ/mol]</b>
+									</td>
+									
+									<td>
+										
+										<a href="Energy_id.asp?conf_id=&sortflag=HOF_S&lang="><img src=images/rise.jpg></a>
+										<a href="Energy_id.asp?conf_id=&sortflag=HOF_S&sortf1=desc&lang=" ><img src=images/descend.jpg></a>
+									</td>
+									
+								</tr>
+							</table>
+							
+						</td>
+								
+		<td bgcolor=#edf0f5 align=center><b>继续检索</b></td>
+</tr>
+
+	
+		<tr>
+			
+			<td bgcolor=#edf0f5  align=center width=60px>191</td>
+			<!--
+			<td bgcolor=#edf0f5  align=center width=60px><a href=Energy_id.asp?s_id=194>E194</a></td>
+			-->
+			<!--<td bgcolor=#edf0f5  align=center width=60px>E194</td>-->
+			<td bgcolor=#edf0f5  align=center valign=middle height=90 width=140 >
+			
+				<div code="JME.class" archive="JME.jar" width=120 height=80>
+					<param name="options" value="depict,useopenchemlib">
+					<param name="mol" value="AKDUFJSQFRYSMT-UHFFFAOYSA-N_2019Jul02001150_opt+freq.log
+ OpenBabel10301911283D
+Gaussian vol1/share/hswap-share/g09/g09/g09 #P Geom=AllCheck Freq(Raman) b3lyp/6
+ 25 26  0  0  0  0  0  0  0  0999 V2000
+    3.8775    0.9062    0.0125 N   0  0  0  0  0  0  0  0  0  0  0  0
+    3.8501   -0.4334    0.0804 C   0  0  0  0  0  0  0  0  0  0  0  0
+    2.6137   -0.9809    0.0271 N   0  0  0  0  0  0  0  0  0  0  0  0
+    1.8137    0.0983   -0.0604 C   0  0  0  0  0  0  0  0  0  0  0  0
+    2.5666    1.2169   -0.0590 N   0  0  0  0  0  0  0  0  0  0  0  0
+    0.3733    0.0795   -0.0775 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.3647   -1.0641   -0.1033 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.6949   -0.6760   -0.0630 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.6623    0.7183   -0.0101 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.4077    1.1709   -0.0173 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.7686   -1.5929    0.1244 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.8871   -1.1230    0.2977 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.4961   -2.8052    0.1232 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.7667    1.6740   -0.0063 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.6627    2.6190    0.7688 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.6757    1.4762   -0.8034 O   0  0  0  0  0  0  0  0  0  0  0  0
+    4.9933   -1.1814    0.2501 N   0  0  0  0  0  0  0  0  0  0  0  0
+    5.8412   -0.7156   -0.0471 H   0  0  0  0  0  0  0  0  0  0  0  0
+    4.9170   -2.1309   -0.0907 H   0  0  0  0  0  0  0  0  0  0  0  0
+    2.1892    2.5506   -0.2514 N   0  0  0  0  0  0  0  0  0  0  0  0
+    1.1762    2.5910   -0.1185 H   0  0  0  0  0  0  0  0  0  0  0  0
+    2.6505    3.0906    0.4805 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.1369   -2.3451   -0.3515 N   0  0  0  0  0  0  0  0  0  0  0  0
+    1.1036   -2.3585   -0.0131 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.4818   -3.0110    0.1055 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  2  0  0  0  0
+  2 17  1  0  0  0  0
+  3  2  1  0  0  0  0
+  4  5  1  0  0  0  0
+  4  3  2  0  0  0  0
+  5  1  1  0  0  0  0
+  6  4  1  0  0  0  0
+  6 10  2  0  0  0  0
+  7  6  1  0  0  0  0
+  7  8  1  0  0  0  0
+  8  9  2  0  0  0  0
+  8 11  1  0  0  0  0
+  9 14  1  0  0  0  0
+ 10  9  1  0  0  0  0
+ 11 12  2  0  0  0  0
+ 13 11  2  0  0  0  0
+ 14 15  2  0  0  0  0
+ 16 14  2  0  0  0  0
+ 18 17  1  0  0  0  0
+ 19 17  1  0  0  0  0
+ 20 21  1  0  0  0  0
+ 20  5  1  0  0  0  0
+ 20 22  1  0  0  0  0
+ 23  7  1  0  0  0  0
+ 23 24  1  0  0  0  0
+ 23 25  1  0  0  0  0
+M  END
+">					
+				</div>				
+			
+						
+			</td>
+			
+			
+			<td bgcolor=#edf0f5 align=center valign=center>1.71</td><td bgcolor=#edf0f5 align=center valign=center>7577</td><td bgcolor=#edf0f5 align=center valign=center>24.70</td><td bgcolor=#edf0f5 align=center valign=center>4869.40</td><td bgcolor=#edf0f5 align=center valign=center>704.80</td><td bgcolor=#edf0f5 align=center valign=center>391.17</td>
+		
+			<td bgcolor=#edf0f5 align=center valign=center>
+			
+				<!--<a href="mol3D.asp?s_id=194" target="_blank">查看三维Mol</href>-->
+				
+				<div style="height:28;vertical-align:bottom ;">
+				<input type="button" value="显示3D结构" onclick="open_3D(194)" style="width:110px; height:24px;border-radius: 10px;  line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px;" >
+				</div>
+				<div style="height:28;vertical-align:bottom ;">
+				<input type=button value="结构检索" id=submit1 name=submit1 onclick="searchsubstr(194)" style="width:110px; height:24px;border-radius: 10px;  line-height:20px; text-align:middle;  vertical-align:middle ;font-size:9px;">
+				<!--<p style="line-height:1px"></p>-->
+				</div>
+				<div style="height:28;vertical-align:bottom ;">
+				<!--<input type="button" value="实验数据" onclick="open_3Dmol(194)" style="width:110px; height:24px;border-radius: 10px; line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px;">-->
+				
+						<input type="button" value="Updating" style="width:110px; height:24px;border-radius: 10px; line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px; color:white;">
+				
+				</div>
+				
+				
+			
+			</td>
+			
+			</tr>
+		
+		<tr>
+			
+			<td bgcolor=#ffffff  align=center width=60px>192</td>
+			<!--
+			<td bgcolor=#ffffff  align=center width=60px><a href=Energy_id.asp?s_id=195>E195</a></td>
+			-->
+			<!--<td bgcolor=#ffffff  align=center width=60px>E195</td>-->
+			<td bgcolor=#ffffff  align=center valign=middle height=90 width=140 >
+			
+				<div code="JME.class" archive="JME.jar" width=120 height=80>
+					<param name="options" value="depict,useopenchemlib">
+					<param name="mol" value="AKFAPUIPEQSHJL-UHFFFAOYSA-N_2019Jul09103740_opt+freq.log
+ OpenBabel10301911283D
+Gaussian vol1/share/hswap-share/g09/g09/g09 #P Geom=AllCheck Freq(Raman) b3lyp/6
+ 27 28  0  0  0  0  0  0  0  0999 V2000
+   -3.7226   -1.4649    0.1287 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.5928   -1.2720   -0.3158 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.9328   -2.1256   -0.9149 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.0016    0.0652   -0.1432 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.8918    1.0877    0.1911 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.6224    0.2929   -0.3214 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.9369    0.8396    0.3268 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.4250    2.3877    0.3399 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.1864    1.6133   -0.1571 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.3749   -0.8114   -0.6583 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.1152    3.1868    0.5920 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.0663    2.6470    0.1619 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.8686    1.8336   -0.2750 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.7692   -0.3841   -0.5633 N   0  0  0  0  0  0  0  0  0  0  0  0
+    0.2293   -1.6584    0.0089 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.2109   -1.1704   -1.6768 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.6834    3.6573    0.2754 H   0  0  0  0  0  0  0  0  0  0  0  0
+    2.5287    0.0271   -1.6188 C   0  0  0  0  0  0  0  0  0  0  0  0
+    2.5357   -0.2943    0.5942 C   0  0  0  0  0  0  0  0  0  0  0  0
+    2.1171    0.0292   -2.6193 H   0  0  0  0  0  0  0  0  0  0  0  0
+    3.7908    0.3856   -1.1658 C   0  0  0  0  0  0  0  0  0  0  0  0
+    3.7948    0.1817    0.2270 C   0  0  0  0  0  0  0  0  0  0  0  0
+    2.0815   -0.6523    1.9216 C   0  0  0  0  0  0  0  0  0  0  0  0
+    4.6066    0.7398   -1.7806 H   0  0  0  0  0  0  0  0  0  0  0  0
+    4.6177    0.3465    0.9106 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.9691   -1.0695    2.2196 O   0  0  0  0  0  0  0  0  0  0  0  0
+    2.8630   -0.5140    2.6991 H   0  0  0  0  0  0  0  0  0  0  0  0
+  2  4  1  0  0  0  0
+  2  1  2  0  0  0  0
+  3  2  2  0  0  0  0
+  4  5  2  0  0  0  0
+  5  7  1  0  0  0  0
+  5  8  1  0  0  0  0
+  6  9  2  0  0  0  0
+  6  4  1  0  0  0  0
+  8 11  1  0  0  0  0
+  9 12  1  0  0  0  0
+ 10 14  1  0  0  0  0
+ 10  6  1  0  0  0  0
+ 10 15  1  0  0  0  0
+ 12 17  1  0  0  0  0
+ 12  8  2  0  0  0  0
+ 13  9  1  0  0  0  0
+ 14 19  1  0  0  0  0
+ 16 10  1  0  0  0  0
+ 18 21  2  0  0  0  0
+ 18 14  1  0  0  0  0
+ 19 23  1  0  0  0  0
+ 20 18  1  0  0  0  0
+ 21 22  1  0  0  0  0
+ 22 19  2  0  0  0  0
+ 22 25  1  0  0  0  0
+ 23 26  2  0  0  0  0
+ 23 27  1  0  0  0  0
+ 24 21  1  0  0  0  0
+M  END
+">					
+				</div>				
+			
+						
+			</td>
+			
+			
+			<td bgcolor=#ffffff align=center valign=center>1.43</td><td bgcolor=#ffffff align=center valign=center>4504</td><td bgcolor=#ffffff align=center valign=center>7.70</td><td bgcolor=#ffffff align=center valign=center>2550.40</td><td bgcolor=#ffffff align=center valign=center>583.80</td><td bgcolor=#ffffff align=center valign=center>-138.84</td>
+		
+			<td bgcolor=#ffffff align=center valign=center>
+			
+				<!--<a href="mol3D.asp?s_id=195" target="_blank">查看三维Mol</href>-->
+				
+				<div style="height:28;vertical-align:bottom ;">
+				<input type="button" value="显示3D结构" onclick="open_3D(195)" style="width:110px; height:24px;border-radius: 10px;  line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px;" >
+				</div>
+				<div style="height:28;vertical-align:bottom ;">
+				<input type=button value="结构检索" id=submit1 name=submit1 onclick="searchsubstr(195)" style="width:110px; height:24px;border-radius: 10px;  line-height:20px; text-align:middle;  vertical-align:middle ;font-size:9px;">
+				<!--<p style="line-height:1px"></p>-->
+				</div>
+				<div style="height:28;vertical-align:bottom ;">
+				<!--<input type="button" value="实验数据" onclick="open_3Dmol(195)" style="width:110px; height:24px;border-radius: 10px; line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px;">-->
+				
+						<input type="button" value="Updating" style="width:110px; height:24px;border-radius: 10px; line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px; color:white;">
+				
+				</div>
+				
+				
+			
+			</td>
+			
+			</tr>
+		
+		<tr>
+			
+			<td bgcolor=#edf0f5  align=center width=60px>193</td>
+			<!--
+			<td bgcolor=#edf0f5  align=center width=60px><a href=Energy_id.asp?s_id=196>E196</a></td>
+			-->
+			<!--<td bgcolor=#edf0f5  align=center width=60px>E196</td>-->
+			<td bgcolor=#edf0f5  align=center valign=middle height=90 width=140 >
+			
+				<div code="JME.class" archive="JME.jar" width=120 height=80>
+					<param name="options" value="depict,useopenchemlib">
+					<param name="mol" value="AKLBZDKCJSROBD-FDYHWXHSSA-N_2019Jul09181313_opt+freq.log
+ OpenBabel10301911283D
+Gaussian vol1/share/hswap-share/g09/g09/g09 #P Geom=AllCheck Freq(Raman) b3lyp/6
+ 35 37  0  0  1  0  0  0  0  0999 V2000
+    2.3421    0.1098    1.2498 O   0  0  0  0  0  0  0  0  0  0  0  0
+    3.6667   -0.0507    0.7039 C   0  0  1  0  0  0  0  0  0  0  0  0
+    1.3890   -0.6298    0.4975 C   0  0  2  0  0  0  0  0  0  0  0  0
+    3.4458   -0.4397   -0.7693 C   0  0  2  0  0  0  0  0  0  0  0  0
+    4.1890   -0.8710    1.2179 H   0  0  0  0  0  0  0  0  0  0  0  0
+    4.4215    1.2570    0.9178 C   0  0  0  0  0  0  0  0  0  0  0  0
+    2.1605   -1.2834   -0.6802 C   0  0  1  0  0  0  0  0  0  0  0  0
+    0.3067    0.2475    0.0852 N   0  0  0  0  0  0  0  0  0  0  0  0
+    0.9498   -1.4107    1.1260 H   0  0  0  0  0  0  0  0  0  0  0  0
+    4.5284   -1.1126   -1.3592 O   0  0  0  0  0  0  0  0  0  0  0  0
+    3.2642    0.4653   -1.3568 H   0  0  0  0  0  0  0  0  0  0  0  0
+    3.6979    2.3740    0.4196 O   0  0  0  0  0  0  0  0  0  0  0  0
+    5.3659    1.2123    0.3663 H   0  0  0  0  0  0  0  0  0  0  0  0
+    4.6546    1.3843    1.9849 H   0  0  0  0  0  0  0  0  0  0  0  0
+    2.5869   -2.6035   -0.3367 O   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5727   -1.2838   -1.6037 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.4635    1.4829   -0.5409 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.0433   -0.0372    0.1620 C   0  0  0  0  0  0  0  0  0  0  0  0
+    4.4363   -2.0440   -1.0876 H   0  0  0  0  0  0  0  0  0  0  0  0
+    2.8960    2.4334    0.9639 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.9135   -3.2387   -0.6203 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.7578    2.0027   -0.8624 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.4524    1.8963   -0.6764 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.7167   -1.1488    0.6924 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.7461    1.0566   -0.4279 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.9376    2.9544   -1.3425 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.1009   -1.1597    0.6375 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.1873   -1.9831    1.1413 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.1435    1.0294   -0.4775 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.7897   -0.0783    0.0557 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.6720   -1.9887    1.0349 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.7228    1.8340   -0.9138 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -5.2538   -0.1270    0.0096 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -5.8123   -1.1200    0.4813 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -5.8478    0.8261   -0.4983 O   0  0  0  0  0  0  0  0  0  0  0  0
+  2  6  1  0  0  0  0
+  2  5  1  1  0  0  0
+  2  1  1  0  0  0  0
+  3  9  1  1  0  0  0
+  3  1  1  0  0  0  0
+  4 11  1  6  0  0  0
+  4  7  1  0  0  0  0
+  4  2  1  0  0  0  0
+  6 14  1  0  0  0  0
+  7 16  1  6  0  0  0
+  7 15  1  0  0  0  0
+  7  3  1  0  0  0  0
+  8 18  1  0  0  0  0
+  8  3  1  0  0  0  0
+ 10 19  1  0  0  0  0
+ 10  4  1  0  0  0  0
+ 12  6  1  0  0  0  0
+ 12 20  1  0  0  0  0
+ 13  6  1  0  0  0  0
+ 17  8  1  0  0  0  0
+ 18 24  2  0  0  0  0
+ 21 15  1  0  0  0  0
+ 22 17  2  0  0  0  0
+ 22 25  1  0  0  0  0
+ 23 17  1  0  0  0  0
+ 24 28  1  0  0  0  0
+ 25 18  1  0  0  0  0
+ 26 22  1  0  0  0  0
+ 27 24  1  0  0  0  0
+ 27 31  1  0  0  0  0
+ 29 25  2  0  0  0  0
+ 29 30  1  0  0  0  0
+ 30 27  2  0  0  0  0
+ 32 29  1  0  0  0  0
+ 33 30  1  0  0  0  0
+ 33 34  2  0  0  0  0
+ 35 33  2  0  0  0  0
+M  END
+">					
+				</div>				
+			
+						
+			</td>
+			
+			
+			<td bgcolor=#edf0f5 align=center valign=center>1.60</td><td bgcolor=#edf0f5 align=center valign=center>5027</td><td bgcolor=#edf0f5 align=center valign=center>10.40</td><td bgcolor=#edf0f5 align=center valign=center>2254.90</td><td bgcolor=#edf0f5 align=center valign=center>609</td><td bgcolor=#edf0f5 align=center valign=center>-788.47</td>
+		
+			<td bgcolor=#edf0f5 align=center valign=center>
+			
+				<!--<a href="mol3D.asp?s_id=196" target="_blank">查看三维Mol</href>-->
+				
+				<div style="height:28;vertical-align:bottom ;">
+				<input type="button" value="显示3D结构" onclick="open_3D(196)" style="width:110px; height:24px;border-radius: 10px;  line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px;" >
+				</div>
+				<div style="height:28;vertical-align:bottom ;">
+				<input type=button value="结构检索" id=submit1 name=submit1 onclick="searchsubstr(196)" style="width:110px; height:24px;border-radius: 10px;  line-height:20px; text-align:middle;  vertical-align:middle ;font-size:9px;">
+				<!--<p style="line-height:1px"></p>-->
+				</div>
+				<div style="height:28;vertical-align:bottom ;">
+				<!--<input type="button" value="实验数据" onclick="open_3Dmol(196)" style="width:110px; height:24px;border-radius: 10px; line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px;">-->
+				
+						<input type="button" value="Updating" style="width:110px; height:24px;border-radius: 10px; line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px; color:white;">
+				
+				</div>
+				
+				
+			
+			</td>
+			
+			</tr>
+		
+		<tr>
+			
+			<td bgcolor=#ffffff  align=center width=60px>194</td>
+			<!--
+			<td bgcolor=#ffffff  align=center width=60px><a href=Energy_id.asp?s_id=197>E197</a></td>
+			-->
+			<!--<td bgcolor=#ffffff  align=center width=60px>E197</td>-->
+			<td bgcolor=#ffffff  align=center valign=middle height=90 width=140 >
+			
+				<div code="JME.class" archive="JME.jar" width=120 height=80>
+					<param name="options" value="depict,useopenchemlib">
+					<param name="mol" value="AKLRRTWTPCBWIA-UHFFFAOYSA-N_2019Jul11121326_opt+freq.log
+ OpenBabel10301911283D
+Gaussian vol1/share/hswap-share/g09/g09/g09 #P Geom=AllCheck Freq(Raman) b3lyp/6
+ 25 26  0  0  0  0  0  0  0  0999 V2000
+    2.9158    0.9266   -0.2150 N   0  0  0  0  0  0  0  0  0  0  0  0
+    2.2975    2.0348   -0.4716 N   0  0  0  0  0  0  0  0  0  0  0  0
+    0.9443    1.8541   -0.4392 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6454    0.5237   -0.1542 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.9362   -0.0076   -0.0092 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.6166   -0.1618   -0.1091 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.8054    0.4882    0.3220 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.8433   -0.3552    0.0578 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.4536   -1.4600   -0.5421 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.0868   -1.3620   -0.6485 C   0  0  0  0  0  0  0  0  0  0  0  0
+    2.3375   -1.2379    0.5732 N   0  0  0  0  0  0  0  0  0  0  0  0
+    1.4344   -2.0429    0.7892 O   0  0  0  0  0  0  0  0  0  0  0  0
+    3.5198   -1.3750    0.8014 O   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0701    2.9024   -0.7251 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.5595    3.0693    0.0549 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6048    3.7417   -0.9313 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.8452    1.6023    1.1748 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.1571    1.2992    2.0995 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.5386    2.2567    0.8159 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -4.1309   -0.0887    0.5072 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -4.7530   -0.8405    0.2275 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -4.5085    0.8048    0.2037 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.3929   -2.3380   -1.3318 N   0  0  0  0  0  0  0  0  0  0  0  0
+    0.4935   -2.5871   -0.9059 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.9763   -3.1489   -1.5064 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  5  1  0  0  0  0
+  2  3  1  0  0  0  0
+  2  1  2  0  0  0  0
+  3  4  2  0  0  0  0
+  4  6  1  0  0  0  0
+  4  5  1  0  0  0  0
+  5 11  1  0  0  0  0
+  6  7  1  0  0  0  0
+  7 17  1  0  0  0  0
+  8  7  1  0  0  0  0
+  8 20  1  0  0  0  0
+  9  8  2  0  0  0  0
+ 10  9  1  0  0  0  0
+ 10  6  2  0  0  0  0
+ 11 12  2  0  0  0  0
+ 11 13  2  0  0  0  0
+ 14  3  1  0  0  0  0
+ 14 15  1  0  0  0  0
+ 16 14  1  0  0  0  0
+ 17 18  1  0  0  0  0
+ 19 17  1  0  0  0  0
+ 21 20  1  0  0  0  0
+ 22 20  1  0  0  0  0
+ 23 24  1  0  0  0  0
+ 23 10  1  0  0  0  0
+ 25 23  1  0  0  0  0
+M  END
+">					
+				</div>				
+			
+						
+			</td>
+			
+			
+			<td bgcolor=#ffffff align=center valign=center>1.68</td><td bgcolor=#ffffff align=center valign=center>7236</td><td bgcolor=#ffffff align=center valign=center>22.30</td><td bgcolor=#ffffff align=center valign=center>3809.90</td><td bgcolor=#ffffff align=center valign=center>839.40</td><td bgcolor=#ffffff align=center valign=center>431.08</td>
+		
+			<td bgcolor=#ffffff align=center valign=center>
+			
+				<!--<a href="mol3D.asp?s_id=197" target="_blank">查看三维Mol</href>-->
+				
+				<div style="height:28;vertical-align:bottom ;">
+				<input type="button" value="显示3D结构" onclick="open_3D(197)" style="width:110px; height:24px;border-radius: 10px;  line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px;" >
+				</div>
+				<div style="height:28;vertical-align:bottom ;">
+				<input type=button value="结构检索" id=submit1 name=submit1 onclick="searchsubstr(197)" style="width:110px; height:24px;border-radius: 10px;  line-height:20px; text-align:middle;  vertical-align:middle ;font-size:9px;">
+				<!--<p style="line-height:1px"></p>-->
+				</div>
+				<div style="height:28;vertical-align:bottom ;">
+				<!--<input type="button" value="实验数据" onclick="open_3Dmol(197)" style="width:110px; height:24px;border-radius: 10px; line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px;">-->
+				
+						<input type="button" value="Updating" style="width:110px; height:24px;border-radius: 10px; line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px; color:white;">
+				
+				</div>
+				
+				
+			
+			</td>
+			
+			</tr>
+		
+		<tr>
+			
+			<td bgcolor=#edf0f5  align=center width=60px>195</td>
+			<!--
+			<td bgcolor=#edf0f5  align=center width=60px><a href=Energy_id.asp?s_id=198>E198</a></td>
+			-->
+			<!--<td bgcolor=#edf0f5  align=center width=60px>E198</td>-->
+			<td bgcolor=#edf0f5  align=center valign=middle height=90 width=140 >
+			
+				<div code="JME.class" archive="JME.jar" width=120 height=80>
+					<param name="options" value="depict,useopenchemlib">
+					<param name="mol" value="AKMVIVMMDBFTOS-VKHMYHEASA-N_2019Jun24011718_opt+freq.log
+ OpenBabel10301911283D
+Gaussian vol1/share/hswap-share/g09/g09/g09 #P Geom=AllCheck Freq(Raman) b3lyp/6
+ 17 18  0  0  1  0  0  0  0  0999 V2000
+    3.3018    0.3881   -0.1053 N   0  0  0  0  0  0  0  0  0  0  0  0
+    2.1384    1.0839   -0.0211 N   0  0  0  0  0  0  0  0  0  0  0  0
+    1.1747    0.1756    0.0079 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.7562   -1.0456   -0.0449 N   0  0  0  0  0  0  0  0  0  0  0  0
+    3.0933   -0.8920   -0.1235 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.2635    0.3502    0.1187 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.9084    1.4036   -0.2408 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.2693    1.1300   -0.0685 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.4342   -0.2687    0.3875 C   0  0  2  0  0  0  0  0  0  0  0  0
+   -1.0542   -0.7223    0.6222 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.0150   -0.3206    1.3232 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.9940   -1.0179   -0.7199 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.2579   -1.9563   -0.4237 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.8219   -0.5396   -1.0696 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.3241   -1.9584   -0.1015 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.6973    1.8564    0.5000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.8405   -0.9201    1.5994 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  2  3  2  0  0  0  0
+  3  6  1  0  0  0  0
+  4  3  1  0  0  0  0
+  5  1  2  0  0  0  0
+  5  4  1  0  0  0  0
+  6 10  1  0  0  0  0
+  7  8  1  0  0  0  0
+  7  6  2  0  0  0  0
+  8  9  1  0  0  0  0
+  8 16  1  0  0  0  0
+  9 10  1  0  0  0  0
+  9 11  1  1  0  0  0
+ 10 17  1  0  0  0  0
+ 12 13  1  0  0  0  0
+ 12  9  1  0  0  0  0
+ 14 12  1  0  0  0  0
+ 15  4  1  0  0  0  0
+M  END
+">					
+				</div>				
+			
+						
+			</td>
+			
+			
+			<td bgcolor=#edf0f5 align=center valign=center>1.60</td><td bgcolor=#edf0f5 align=center valign=center>6903</td><td bgcolor=#edf0f5 align=center valign=center>19.60</td><td bgcolor=#edf0f5 align=center valign=center>2938.80</td><td bgcolor=#edf0f5 align=center valign=center>1017.30</td><td bgcolor=#edf0f5 align=center valign=center>452.97</td>
+		
+			<td bgcolor=#edf0f5 align=center valign=center>
+			
+				<!--<a href="mol3D.asp?s_id=198" target="_blank">查看三维Mol</href>-->
+				
+				<div style="height:28;vertical-align:bottom ;">
+				<input type="button" value="显示3D结构" onclick="open_3D(198)" style="width:110px; height:24px;border-radius: 10px;  line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px;" >
+				</div>
+				<div style="height:28;vertical-align:bottom ;">
+				<input type=button value="结构检索" id=submit1 name=submit1 onclick="searchsubstr(198)" style="width:110px; height:24px;border-radius: 10px;  line-height:20px; text-align:middle;  vertical-align:middle ;font-size:9px;">
+				<!--<p style="line-height:1px"></p>-->
+				</div>
+				<div style="height:28;vertical-align:bottom ;">
+				<!--<input type="button" value="实验数据" onclick="open_3Dmol(198)" style="width:110px; height:24px;border-radius: 10px; line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px;">-->
+				
+						<input type="button" value="Updating" style="width:110px; height:24px;border-radius: 10px; line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px; color:white;">
+				
+				</div>
+				
+				
+			
+			</td>
+			
+			</tr>
+		
+		<tr>
+			
+			<td bgcolor=#ffffff  align=center width=60px>196</td>
+			<!--
+			<td bgcolor=#ffffff  align=center width=60px><a href=Energy_id.asp?s_id=199>E199</a></td>
+			-->
+			<!--<td bgcolor=#ffffff  align=center width=60px>E199</td>-->
+			<td bgcolor=#ffffff  align=center valign=middle height=90 width=140 >
+			
+				<div code="JME.class" archive="JME.jar" width=120 height=80>
+					<param name="options" value="depict,useopenchemlib">
+					<param name="mol" value="AKOAOGUMQNHTBR-UHFFFAOYSA-N_2019Jun22021147_opt+freq.log
+ OpenBabel10301911283D
+Gaussian vol1/share/hswap-share/g09/g09/g09 #P Geom=AllCheck Freq(Raman) b3lyp/6
+ 17 18  0  0  0  0  0  0  0  0999 V2000
+   -1.8720    1.4976    0.2092 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.8166    2.3632    0.1419 O   0  0  0  0  0  0  0  0  0  0  0  0
+    0.3796    1.7293   -0.1294 N   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0614    0.4719   -0.2208 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.3308    0.3241   -0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0375   -0.5875   -0.4372 N   0  0  0  0  0  0  0  0  0  0  0  0
+    2.2065   -0.1296   -1.2157 N   0  0  0  0  0  0  0  0  0  0  0  0
+    3.0992    0.0508   -0.2013 C   0  0  0  0  0  0  0  0  0  0  0  0
+    2.7294   -0.3931    1.0315 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.4376   -1.0702    0.9141 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.0935   -0.9012   -0.0455 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.2659   -0.8752    0.2859 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.4647   -1.8973   -0.4440 O   0  0  0  0  0  0  0  0  0  0  0  0
+    0.5394   -1.3454   -0.9164 H   0  0  0  0  0  0  0  0  0  0  0  0
+    4.0359    0.5364   -0.4502 H   0  0  0  0  0  0  0  0  0  0  0  0
+    3.1989   -0.3265    1.9986 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5788   -2.0812    0.7722 H   0  0  0  0  0  0  0  0  0  0  0  0
+  2  1  1  0  0  0  0
+  3  2  1  0  0  0  0
+  4  3  2  0  0  0  0
+  4  5  1  0  0  0  0
+  5  1  2  0  0  0  0
+  6  4  1  0  0  0  0
+  6 10  1  0  0  0  0
+  7  6  1  0  0  0  0
+  7  8  1  0  0  0  0
+  8  9  2  0  0  0  0
+  9 16  1  0  0  0  0
+ 10  9  1  0  0  0  0
+ 11  5  1  0  0  0  0
+ 11 12  2  0  0  0  0
+ 13 11  2  0  0  0  0
+ 14  6  1  0  0  0  0
+ 15  8  1  0  0  0  0
+ 17 10  1  0  0  0  0
+M  RAD  1   7   2
+M  END
+">					
+				</div>				
+			
+						
+			</td>
+			
+			
+			<td bgcolor=#ffffff align=center valign=center>1.65</td><td bgcolor=#ffffff align=center valign=center>8083</td><td bgcolor=#ffffff align=center valign=center>27.50</td><td bgcolor=#ffffff align=center valign=center>7595.50</td><td bgcolor=#ffffff align=center valign=center>669.20</td><td bgcolor=#ffffff align=center valign=center>716.55</td>
+		
+			<td bgcolor=#ffffff align=center valign=center>
+			
+				<!--<a href="mol3D.asp?s_id=199" target="_blank">查看三维Mol</href>-->
+				
+				<div style="height:28;vertical-align:bottom ;">
+				<input type="button" value="显示3D结构" onclick="open_3D(199)" style="width:110px; height:24px;border-radius: 10px;  line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px;" >
+				</div>
+				<div style="height:28;vertical-align:bottom ;">
+				<input type=button value="结构检索" id=submit1 name=submit1 onclick="searchsubstr(199)" style="width:110px; height:24px;border-radius: 10px;  line-height:20px; text-align:middle;  vertical-align:middle ;font-size:9px;">
+				<!--<p style="line-height:1px"></p>-->
+				</div>
+				<div style="height:28;vertical-align:bottom ;">
+				<!--<input type="button" value="实验数据" onclick="open_3Dmol(199)" style="width:110px; height:24px;border-radius: 10px; line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px;">-->
+				
+						<input type="button" value="Updating" style="width:110px; height:24px;border-radius: 10px; line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px; color:white;">
+				
+				</div>
+				
+				
+			
+			</td>
+			
+			</tr>
+		
+		<tr>
+			
+			<td bgcolor=#edf0f5  align=center width=60px>197</td>
+			<!--
+			<td bgcolor=#edf0f5  align=center width=60px><a href=Energy_id.asp?s_id=200>E200</a></td>
+			-->
+			<!--<td bgcolor=#edf0f5  align=center width=60px>E200</td>-->
+			<td bgcolor=#edf0f5  align=center valign=middle height=90 width=140 >
+			
+				<div code="JME.class" archive="JME.jar" width=120 height=80>
+					<param name="options" value="depict,useopenchemlib">
+					<param name="mol" value="AKRIAPXODDNUIS-UHFFFAOYSA-N_2019Jul02001353_opt+freq.log
+ OpenBabel10301911283D
+Gaussian vol1/share/hswap-share/g09/g09/g09 #P Geom=AllCheck Freq(Raman) b3lyp/6
+ 23 24  0  0  0  0  0  0  0  0999 V2000
+   -3.3767   -1.2201   -0.5415 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.4944   -2.0666   -1.0256 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.1899   -1.6639   -0.9759 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2378   -0.4686   -0.4130 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.5792   -0.1886   -0.1538 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.0690    0.3409   -0.1766 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.1744   -0.2861   -0.0096 N   0  0  0  0  0  0  0  0  0  0  0  0
+    2.1327    0.6681   -0.1507 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.6328    1.8481   -0.4095 N   0  0  0  0  0  0  0  0  0  0  0  0
+    0.2741    1.6803   -0.4462 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.1498    0.8294    0.6701 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -4.3276    0.7357    0.9105 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.3587    1.6904    1.0451 O   0  0  0  0  0  0  0  0  0  0  0  0
+    1.3688   -1.7094    0.3769 N   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6993   -2.0634    1.3159 O   0  0  0  0  0  0  0  0  0  0  0  0
+    2.1515   -2.3125   -0.3096 O   0  0  0  0  0  0  0  0  0  0  0  0
+    3.5404    0.4469    0.1425 N   0  0  0  0  0  0  0  0  0  0  0  0
+    4.3390    1.1872   -0.4114 O   0  0  0  0  0  0  0  0  0  0  0  0
+    3.7933   -0.4505    0.9469 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.5270    2.7190   -0.8166 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.0365    3.6035   -0.8731 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.4327    2.7652   -0.3648 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.7964   -3.0155   -1.4470 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  5  1  0  0  0  0
+  2  3  1  0  0  0  0
+  2  1  2  0  0  0  0
+  3  4  2  0  0  0  0
+  4  6  1  0  0  0  0
+  4  5  1  0  0  0  0
+  5 11  1  0  0  0  0
+  6  7  1  0  0  0  0
+  7 14  1  0  0  0  0
+  8  7  1  0  0  0  0
+  8 17  1  0  0  0  0
+  9  8  2  0  0  0  0
+ 10  9  1  0  0  0  0
+ 10  6  2  0  0  0  0
+ 11 12  2  0  0  0  0
+ 11 13  2  0  0  0  0
+ 14 15  2  0  0  0  0
+ 16 14  2  0  0  0  0
+ 17 19  2  0  0  0  0
+ 18 17  2  0  0  0  0
+ 20 10  1  0  0  0  0
+ 20 22  1  0  0  0  0
+ 21 20  1  0  0  0  0
+ 23  2  1  0  0  0  0
+M  END
+">					
+				</div>				
+			
+						
+			</td>
+			
+			
+			<td bgcolor=#edf0f5 align=center valign=center>1.77</td><td bgcolor=#edf0f5 align=center valign=center>8159</td><td bgcolor=#edf0f5 align=center valign=center>29.20</td><td bgcolor=#edf0f5 align=center valign=center>5864</td><td bgcolor=#edf0f5 align=center valign=center>648.10</td><td bgcolor=#edf0f5 align=center valign=center>422.29</td>
+		
+			<td bgcolor=#edf0f5 align=center valign=center>
+			
+				<!--<a href="mol3D.asp?s_id=200" target="_blank">查看三维Mol</href>-->
+				
+				<div style="height:28;vertical-align:bottom ;">
+				<input type="button" value="显示3D结构" onclick="open_3D(200)" style="width:110px; height:24px;border-radius: 10px;  line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px;" >
+				</div>
+				<div style="height:28;vertical-align:bottom ;">
+				<input type=button value="结构检索" id=submit1 name=submit1 onclick="searchsubstr(200)" style="width:110px; height:24px;border-radius: 10px;  line-height:20px; text-align:middle;  vertical-align:middle ;font-size:9px;">
+				<!--<p style="line-height:1px"></p>-->
+				</div>
+				<div style="height:28;vertical-align:bottom ;">
+				<!--<input type="button" value="实验数据" onclick="open_3Dmol(200)" style="width:110px; height:24px;border-radius: 10px; line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px;">-->
+				
+						<input type="button" value="Updating" style="width:110px; height:24px;border-radius: 10px; line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px; color:white;">
+				
+				</div>
+				
+				
+			
+			</td>
+			
+			</tr>
+		
+		<tr>
+			
+			<td bgcolor=#ffffff  align=center width=60px>198</td>
+			<!--
+			<td bgcolor=#ffffff  align=center width=60px><a href=Energy_id.asp?s_id=201>E201</a></td>
+			-->
+			<!--<td bgcolor=#ffffff  align=center width=60px>E201</td>-->
+			<td bgcolor=#ffffff  align=center valign=middle height=90 width=140 >
+			
+				<div code="JME.class" archive="JME.jar" width=120 height=80>
+					<param name="options" value="depict,useopenchemlib">
+					<param name="mol" value="AKROXHNUFFVTNK-UHFFFAOYSA-N_2019Jul02010932_opt+freq.log
+ OpenBabel10301911283D
+Gaussian vol1/share/hswap-share/g09/g09/g09 #P Geom=AllCheck Freq(Raman) b3lyp/6
+ 25 26  0  0  0  0  0  0  0  0999 V2000
+   -2.3310   -2.0908    1.0921 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.0450   -1.2425    0.3504 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.2565   -0.2595   -0.1541 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.9892   -0.5408    0.3553 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.0836   -1.6645    1.0993 N   0  0  0  0  0  0  0  0  0  0  0  0
+    0.2840    0.1471    0.2151 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.4569   -0.5357   -0.0150 N   0  0  0  0  0  0  0  0  0  0  0  0
+    2.4799    0.3785   -0.0213 C   0  0  0  0  0  0  0  0  0  0  0  0
+    2.0519    1.5955    0.1725 N   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7157    1.4668    0.3301 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.7362    0.7682   -1.0246 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.8956    1.4006   -1.6517 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.9598    0.9328   -1.0813 O   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5607   -2.0673   -0.1137 N   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0320   -2.5166   -1.0920 O   0  0  0  0  0  0  0  0  0  0  0  0
+    2.1307   -2.5736    0.8081 O   0  0  0  0  0  0  0  0  0  0  0  0
+    3.8503    0.0128   -0.3305 N   0  0  0  0  0  0  0  0  0  0  0  0
+    4.7111    0.8534   -0.1356 O   0  0  0  0  0  0  0  0  0  0  0  0
+    4.0059   -1.1259   -0.7792 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.1025    2.6215    0.6562 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2770    2.3864    0.9560 O   0  0  0  0  0  0  0  0  0  0  0  0
+    0.4289    3.7194    0.6307 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -4.3687   -1.5323    0.0544 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -4.8882   -0.6568    0.0349 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -4.6937   -2.1625    0.7856 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  5  2  0  0  0  0
+  2  1  1  0  0  0  0
+  3  2  1  0  0  0  0
+  3  4  2  0  0  0  0
+  4  5  1  0  0  0  0
+  6 10  2  0  0  0  0
+  6  4  1  0  0  0  0
+  7  6  1  0  0  0  0
+  8  7  1  0  0  0  0
+  8  9  2  0  0  0  0
+  9 10  1  0  0  0  0
+ 10 20  1  0  0  0  0
+ 11  3  1  0  0  0  0
+ 12 11  2  0  0  0  0
+ 13 11  2  0  0  0  0
+ 14  7  1  0  0  0  0
+ 14 16  2  0  0  0  0
+ 15 14  2  0  0  0  0
+ 17 18  2  0  0  0  0
+ 17  8  1  0  0  0  0
+ 19 17  2  0  0  0  0
+ 20 21  2  0  0  0  0
+ 22 20  2  0  0  0  0
+ 23  2  1  0  0  0  0
+ 23 25  1  0  0  0  0
+ 24 23  1  0  0  0  0
+M  END
+">					
+				</div>				
+			
+						
+			</td>
+			
+			
+			<td bgcolor=#ffffff align=center valign=center>1.86</td><td bgcolor=#ffffff align=center valign=center>8777</td><td bgcolor=#ffffff align=center valign=center>34.90</td><td bgcolor=#ffffff align=center valign=center>6422.60</td><td bgcolor=#ffffff align=center valign=center>644.60</td><td bgcolor=#ffffff align=center valign=center>499.63</td>
+		
+			<td bgcolor=#ffffff align=center valign=center>
+			
+				<!--<a href="mol3D.asp?s_id=201" target="_blank">查看三维Mol</href>-->
+				
+				<div style="height:28;vertical-align:bottom ;">
+				<input type="button" value="显示3D结构" onclick="open_3D(201)" style="width:110px; height:24px;border-radius: 10px;  line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px;" >
+				</div>
+				<div style="height:28;vertical-align:bottom ;">
+				<input type=button value="结构检索" id=submit1 name=submit1 onclick="searchsubstr(201)" style="width:110px; height:24px;border-radius: 10px;  line-height:20px; text-align:middle;  vertical-align:middle ;font-size:9px;">
+				<!--<p style="line-height:1px"></p>-->
+				</div>
+				<div style="height:28;vertical-align:bottom ;">
+				<!--<input type="button" value="实验数据" onclick="open_3Dmol(201)" style="width:110px; height:24px;border-radius: 10px; line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px;">-->
+				
+						<input type="button" value="Updating" style="width:110px; height:24px;border-radius: 10px; line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px; color:white;">
+				
+				</div>
+				
+				
+			
+			</td>
+			
+			</tr>
+		
+		<tr>
+			
+			<td bgcolor=#edf0f5  align=center width=60px>199</td>
+			<!--
+			<td bgcolor=#edf0f5  align=center width=60px><a href=Energy_id.asp?s_id=202>E202</a></td>
+			-->
+			<!--<td bgcolor=#edf0f5  align=center width=60px>E202</td>-->
+			<td bgcolor=#edf0f5  align=center valign=middle height=90 width=140 >
+			
+				<div code="JME.class" archive="JME.jar" width=120 height=80>
+					<param name="options" value="depict,useopenchemlib">
+					<param name="mol" value="AKUMXIAUDJZLPS-HNQUOIGGSA-N_2019Jun24015207_opt+freq.log
+ OpenBabel10301911283D
+Gaussian vol1/share/hswap-share/g09/g09/g09 #P Geom=AllCheck Freq(Raman) b3lyp/6
+ 23 23  0  0  1  0  0  0  0  0999 V2000
+    2.8563    0.2761    1.4059 N   0  0  0  0  0  0  0  0  0  0  0  0
+    1.8450    0.4166    2.2802 O   0  0  0  0  0  0  0  0  0  0  0  0
+    0.5929    0.2301    1.6901 N   0  0  0  0  0  0  0  0  0  0  0  0
+    0.8513   -0.0327    0.4258 C   0  0  0  0  0  0  0  0  0  0  0  0
+    2.2777    0.0014    0.2663 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.0883   -0.2339   -0.5470 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.4077   -0.5950   -0.2191 C   0  0  1  0  0  0  0  0  0  0  0  0
+   -2.4595    0.3174   -0.1879 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.3316    1.6837   -0.5043 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2584    2.2270   -0.1086 N   0  0  0  0  0  0  0  0  0  0  0  0
+    3.0423   -0.2334   -0.9356 N   0  0  0  0  0  0  0  0  0  0  0  0
+    4.2585   -0.1347   -0.8869 O   0  0  0  0  0  0  0  0  0  0  0  0
+    2.3763   -0.5174   -1.9408 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.6155   -1.9961   -0.0158 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.6346   -2.7409   -0.1200 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.7648   -2.4214    0.2416 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.7370   -0.0072    0.0574 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.9603   -0.9818    0.2300 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -4.4299    0.7259    0.0337 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.1411    3.4799   -0.5020 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.9385    3.9412   -0.9383 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.4328    4.0177   -0.0251 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.3106   -0.6506   -1.3838 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  3  2  1  0  0  0  0
+  4  3  2  0  0  0  0
+  5  4  1  0  0  0  0
+  5  1  2  0  0  0  0
+  6  4  1  0  0  0  0
+  7  6  1  6  0  0  0
+  7  8  1  0  0  0  0
+  7 14  1  0  0  0  0
+  8 17  1  0  0  0  0
+  9  8  2  0  0  0  0
+  9 10  1  0  0  0  0
+ 11 12  2  0  0  0  0
+ 11  5  1  0  0  0  0
+ 13 11  2  0  0  0  0
+ 14 16  2  0  0  0  0
+ 15 14  2  0  0  0  0
+ 17 18  1  0  0  0  0
+ 19 17  1  0  0  0  0
+ 20 10  1  0  0  0  0
+ 20 22  1  0  0  0  0
+ 21 20  1  0  0  0  0
+ 23  6  1  0  0  0  0
+M  RAD  2   7   2  10   2
+M  END
+">					
+				</div>				
+			
+						
+			</td>
+			
+			
+			<td bgcolor=#edf0f5 align=center valign=center>1.77</td><td bgcolor=#edf0f5 align=center valign=center>8599</td><td bgcolor=#edf0f5 align=center valign=center>32.40</td><td bgcolor=#edf0f5 align=center valign=center>6705.40</td><td bgcolor=#edf0f5 align=center valign=center>713.10</td><td bgcolor=#edf0f5 align=center valign=center>639.18</td>
+		
+			<td bgcolor=#edf0f5 align=center valign=center>
+			
+				<!--<a href="mol3D.asp?s_id=202" target="_blank">查看三维Mol</href>-->
+				
+				<div style="height:28;vertical-align:bottom ;">
+				<input type="button" value="显示3D结构" onclick="open_3D(202)" style="width:110px; height:24px;border-radius: 10px;  line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px;" >
+				</div>
+				<div style="height:28;vertical-align:bottom ;">
+				<input type=button value="结构检索" id=submit1 name=submit1 onclick="searchsubstr(202)" style="width:110px; height:24px;border-radius: 10px;  line-height:20px; text-align:middle;  vertical-align:middle ;font-size:9px;">
+				<!--<p style="line-height:1px"></p>-->
+				</div>
+				<div style="height:28;vertical-align:bottom ;">
+				<!--<input type="button" value="实验数据" onclick="open_3Dmol(202)" style="width:110px; height:24px;border-radius: 10px; line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px;">-->
+				
+						<input type="button" value="Updating" style="width:110px; height:24px;border-radius: 10px; line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px; color:white;">
+				
+				</div>
+				
+				
+			
+			</td>
+			
+			</tr>
+		
+		<tr>
+			
+			<td bgcolor=#ffffff  align=center width=60px>200</td>
+			<!--
+			<td bgcolor=#ffffff  align=center width=60px><a href=Energy_id.asp?s_id=203>E203</a></td>
+			-->
+			<!--<td bgcolor=#ffffff  align=center width=60px>E203</td>-->
+			<td bgcolor=#ffffff  align=center valign=middle height=90 width=140 >
+			
+				<div code="JME.class" archive="JME.jar" width=120 height=80>
+					<param name="options" value="depict,useopenchemlib">
+					<param name="mol" value="AKZYEMBFVLFEOF-UHFFFAOYSA-N_2019Jul02204935_opt+freq.log
+ OpenBabel10301911283D
+Gaussian vol1/share/hswap-share/g09/g09/g09 #P Geom=AllCheck Freq(Raman) b3lyp/6
+ 23 24  0  0  0  0  0  0  0  0999 V2000
+    2.6680    0.1137   -0.0790 N   0  0  0  0  0  0  0  0  0  0  0  0
+    2.4705   -0.0742   -1.4202 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.1859   -0.2046   -1.6382 N   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6454   -0.0854   -0.3795 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5055    0.1117    0.6015 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.8048   -0.1310   -0.1314 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.5635   -1.2530    0.0400 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.8847   -1.0330    0.2569 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.0073    0.2911    0.2175 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.7249    0.8987   -0.0232 C   0  0  0  0  0  0  0  0  0  0  0  0
+    3.9330    0.3060    0.5946 N   0  0  0  0  0  0  0  0  0  0  0  0
+    3.8816    0.4563    1.7895 O   0  0  0  0  0  0  0  0  0  0  0  0
+    4.8923    0.2871   -0.1547 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.0940   -2.6232    0.0440 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.9414   -3.4614    0.2326 O   0  0  0  0  0  0  0  0  0  0  0  0
+    0.1019   -2.7550   -0.1458 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.4534    2.2962   -0.1269 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.3144    2.6560   -0.4165 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.4052    3.0634    0.0857 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -4.1980    0.9197    0.3434 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -4.9828    0.3824    0.6820 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -4.1753    1.9177    0.4978 H   0  0  0  0  0  0  0  0  0  0  0  0
+    3.2747   -0.1014   -2.1391 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1 11  1  0  0  0  0
+  1  5  1  0  0  0  0
+  2  1  1  0  0  0  0
+  3  2  2  0  0  0  0
+  3  4  1  0  0  0  0
+  4  6  1  0  0  0  0
+  4  5  2  0  0  0  0
+  6 10  2  0  0  0  0
+  6  7  1  0  0  0  0
+  7 14  1  0  0  0  0
+  7  8  1  0  0  0  0
+  9  8  2  0  0  0  0
+  9 20  1  0  0  0  0
+ 10  9  1  0  0  0  0
+ 11 12  2  0  0  0  0
+ 13 11  2  0  0  0  0
+ 14 15  2  0  0  0  0
+ 16 14  2  0  0  0  0
+ 17 10  1  0  0  0  0
+ 17 19  2  0  0  0  0
+ 18 17  2  0  0  0  0
+ 20 22  1  0  0  0  0
+ 20 21  1  0  0  0  0
+ 23  2  1  0  0  0  0
+M  END
+">					
+				</div>				
+			
+						
+			</td>
+			
+			
+			<td bgcolor=#ffffff align=center valign=center>1.75</td><td bgcolor=#ffffff align=center valign=center>8093</td><td bgcolor=#ffffff align=center valign=center>28.60</td><td bgcolor=#ffffff align=center valign=center>5839.90</td><td bgcolor=#ffffff align=center valign=center>648.10</td><td bgcolor=#ffffff align=center valign=center>415.43</td>
+		
+			<td bgcolor=#ffffff align=center valign=center>
+			
+				<!--<a href="mol3D.asp?s_id=203" target="_blank">查看三维Mol</href>-->
+				
+				<div style="height:28;vertical-align:bottom ;">
+				<input type="button" value="显示3D结构" onclick="open_3D(203)" style="width:110px; height:24px;border-radius: 10px;  line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px;" >
+				</div>
+				<div style="height:28;vertical-align:bottom ;">
+				<input type=button value="结构检索" id=submit1 name=submit1 onclick="searchsubstr(203)" style="width:110px; height:24px;border-radius: 10px;  line-height:20px; text-align:middle;  vertical-align:middle ;font-size:9px;">
+				<!--<p style="line-height:1px"></p>-->
+				</div>
+				<div style="height:28;vertical-align:bottom ;">
+				<!--<input type="button" value="实验数据" onclick="open_3Dmol(203)" style="width:110px; height:24px;border-radius: 10px; line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px;">-->
+				
+						<input type="button" value="Updating" style="width:110px; height:24px;border-radius: 10px; line-height:20px; text-align:center;  vertical-align:middle ;font-size:9px; color:white;">
+				
+				</div>
+				
+				
+			
+			</td>
+			
+			</tr>
+		
+		</table>
+		</form>
+		
+<form name="formPage" method="post" action="Energy_id.asp">
+		<input type="hidden" name="Flag">
+		<input type="hidden" name="lang" value="">
+		<INPUT TYPE="HIDDEN" NAME="conf_id" VALUE="">
+		<INPUT TYPE="HIDDEN" NAME="s_id" VALUE="">
+		
+		<input type="hidden" name="sortflag" value="">
+		<input type="hidden" name="sortf1" value="">
+		<!--Form method=Post action="list_all.asp"  name=formPage id=formPage LANGUAGE=javascript onsubmit="return formPage_onsubmit()"-->
+		<INPUT TYPE="HIDDEN" NAME="pageno" VALUE="">
+		<!--
+		<INPUT TYPE="HIDDEN" NAME="text6" VALUE="">
+		<INPUT TYPE="HIDDEN" NAME="select6" VALUE="">
+		<INPUT TYPE="HIDDEN" NAME="queryMethod" VALUE="">
+		-->
+		<TABLE Align=center border=0 width=600>
+		<TR>
+		
+				<td>
+					&nbsp;<a href="#" onclick="ScrollPage(1)">第一页</a>&nbsp;
+				</td>
+				<td>
+					&nbsp;<a href=# onclick="ScrollPage('19')">上一页</a>&nbsp;
+				</td>
+		
+		<td>当前页码:20 / 20 , 10 条纪录/页</td>
+		</TR>
+		</TABLE>
+		
+		</form> 
+		
+
+</div>
+<div align=center>
+<A href="javascript:history.go(-1)">返回上一页</A>
+</div>
+</BODY>
+</HTML>
+
