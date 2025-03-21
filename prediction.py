@@ -1,5 +1,7 @@
 import os.path
 import pickle
+from urllib.parse import quote
+from urllib.request import urlopen
 
 import numpy as np
 import pandas as pd
@@ -243,17 +245,17 @@ def train_data(df: pd.DataFrame):
     X = np.array(df['desc'].tolist())
     for col in df.iloc[:, :-2].columns:
         y = df[col]
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=42)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
         y_train_mean = np.mean(y_train)
-        # param_grid = {"alpha": np.logspace(-10, 2, 50), "gamma": np.logspace(-10, -1, 50), "kernel": ['rbf']}
-        # grd_srch = GridSearchCV(KernelRidge(), param_grid, cv=5, scoring='neg_mean_squared_error', verbose=0)
+        param_grid = {"alpha": np.logspace(-10, 2, 50), "gamma": np.logspace(-10, -1, 50), "kernel": ['rbf']}
+        grd_srch = GridSearchCV(KernelRidge(), param_grid, cv=5, scoring='neg_mean_squared_error', verbose=0)
         # param_grid = {'n_estimators': np.linspace(50, 500, 10, dtype=int), 'max_features': ['sqrt', 'log2', 1]}
         # grd_srch = GridSearchCV(RandomForestRegressor(), param_grid, cv=5, scoring='neg_mean_squared_error', verbose=0)
         # param_grid = {'n_neighbors':np.arange(2,10,1)}
         # grd_srch = GridSearchCV(KNeighborsRegressor(), param_grid, cv=5, scoring='neg_mean_squared_error', verbose=0)
-        param_grid = {'kernel': ['linear', 'poly', 'rbf'], 'degree': [2, 3, 4], 'C': np.logspace(-3, 2, 10),
-                      'epsilon': np.logspace(-3, 2, 10)}
-        grd_srch = GridSearchCV(SVR(), param_grid, cv=5, scoring='neg_mean_squared_error', verbose=0)
+        # param_grid = {'kernel': ['linear', 'poly', 'rbf'], 'degree': [2, 3, 4], 'C': np.logspace(-3, 2, 10),
+        #               'epsilon': np.logspace(-3, 2, 10)}
+        # grd_srch = GridSearchCV(SVR(), param_grid, cv=5, scoring='neg_mean_squared_error', verbose=0)
         grd_srch.fit(X_train, y_train)
         best_model = grd_srch.best_estimator_
         with open(f'./trained_models/{col}.pkl', 'wb') as f:
@@ -276,6 +278,40 @@ def train_data(df: pd.DataFrame):
         plt.tight_layout()
         plt.savefig(f'./trained_models_plots/{col}.jpg', dpi=200)
         plt.show()
+
+@tool
+def convert_name_to_smiles(name: str) -> str:
+    """
+    Converts a molecule's name to its SMILES representation.
+    :param name: name of the molecule
+    :return: SMILES representation of the molecule
+    """
+    try:
+        url = 'http://cactus.nci.nih.gov/chemical/structure/' + quote(name) + '/smiles'
+        ans = urlopen(url).read().decode('utf8')
+        return ans
+    except:
+        return 'Did not convert'
+
+
+@tool
+def predict_properties(smiles: str) -> dict:
+    """
+    Predicts the following properties of energetic materials: Density, Solid-phase formation enthalpy,
+    Detonation speed, Explosion capacity, Explosion pressure, Explosive heat.
+    :param smiles: SMILES string representing the molecule to predict.
+    :return: Dictionary with predicted values
+    """
+    descriptor = np.array(create_descriptor(smiles)).reshape(1, -1)
+    print(descriptor)
+    property_list = ['Density', 'Detonation speed', 'Explosion capacity', 'Explosion pressure', 'Explosive heat',
+                     'Solid phase formation enthalpy']
+    predictions = {}
+    for key in property_list:
+        with open(f'./trained_models/{key}.pkl', 'rb') as f:
+            model = pickle.load(f)
+            predictions[key] = model.predict(descriptor)[0]
+    return predictions
 
 
 # def train_data(energetic_property: str):
@@ -379,26 +415,26 @@ def train_data(df: pd.DataFrame):
 #         train_data2(p)
 
 
-@tool
-def predict_properties(smiles: str) -> dict:
-    """
-    Predicts the following properties of energetic materials: Density, Gas phase formation enthalpy,
-    sublimation enthalpy, heat of explosion, detonation velocity, detonation pressure, gurney energy and h50.
-    :param smiles: SMILES string representing the molecule to predict.
-    :return: Dictionary with predicted values
-    """
-    # descriptor = np.array(create_descriptor(smiles)).reshape(1,-1)
-    descriptor = np.array(custom_descriptor_set(Chem.MolFromSmiles(smiles))).reshape(1, -1)
-    print(descriptor)
-    property_dict = {'density': 20, 'gas phase formation enthalpy': 21, 'sublimation enthalpy': 22,
-                     'heat of explosion': 23, 'detonation velocity': 24, 'detonation pressure': 25,
-                     'gurney energy': 26, 'h50': 27}
-    predictions = {}
-    for key in property_dict.keys():
-        with open(f'./trained_models/{key}.pkl', 'rb') as f:
-            model = pickle.load(f)
-            predictions[key] = model.predict(descriptor)[0]
-    return predictions
+# @tool
+# def predict_properties(smiles: str) -> dict:
+#     """
+#     Predicts the following properties of energetic materials: Density, Gas phase formation enthalpy,
+#     sublimation enthalpy, heat of explosion, detonation velocity, detonation pressure, gurney energy and h50.
+#     :param smiles: SMILES string representing the molecule to predict.
+#     :return: Dictionary with predicted values
+#     """
+#     # descriptor = np.array(create_descriptor(smiles)).reshape(1,-1)
+#     descriptor = np.array(custom_descriptor_set(Chem.MolFromSmiles(smiles))).reshape(1, -1)
+#     print(descriptor)
+#     property_dict = {'density': 20, 'gas phase formation enthalpy': 21, 'sublimation enthalpy': 22,
+#                      'heat of explosion': 23, 'detonation velocity': 24, 'detonation pressure': 25,
+#                      'gurney energy': 26, 'h50': 27}
+#     predictions = {}
+#     for key in property_dict.keys():
+#         with open(f'./trained_models/{key}.pkl', 'rb') as f:
+#             model = pickle.load(f)
+#             predictions[key] = model.predict(descriptor)[0]
+#     return predictions
 
 
 # def train_data_kernel_ridge(energetic_property: str):
@@ -426,5 +462,5 @@ def predict_properties(smiles: str) -> dict:
 #     print('test rmse:', root_mean_squared_error(y_test, best_model.predict(X_test)))
 #     print('test rrmse:', root_mean_squared_error(y_test, best_model.predict(X_test)) / y_train_mean)
 
-df = pd.read_csv('extracted_chemical_data.csv')
-train_data(df)
+# df = pd.read_csv('extracted_chemical_data.csv')
+# train_data(df)
