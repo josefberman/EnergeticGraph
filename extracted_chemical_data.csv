@@ -1,4 +1,4 @@
-Density,Detonation speed,Explosion pressure,Explosive heat,Explosion capacity,Solid phase formation enthalpy,SMILES
+Density,Detonation velocity,Explosion pressure,Explosion heat,Explosion capacity,Solid phase formation enthalpy,SMILES
 1.58,5955,14.5,4061.6,515.7,-347.02,COC(=O)c1c([N+](=O)[O-])noc1-c1ccc([N+](=O)[O-])cc1
 1.84,8724,34.2,6650.9,622,497.92,O=[N+]([O-])c1nc([N+](=O)[O-])n([N+](=O)[O-])c1-c1cn([N+](=O)[O-])nn1
 1.72,7423,23.8,4803.8,653,274.79,Nc1n[nH]c(-c2c([N+](=O)[O-])ncn2[N+](=O)[O-])n1
