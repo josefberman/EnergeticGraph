@@ -17,6 +17,7 @@ from sklearn.neighbors import KNeighborsRegressor
 from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 from langchain_core.tools import tool
+import statsmodels.api as sm
 
 from descriptors import custom_descriptor_set
 
@@ -275,6 +276,15 @@ def train_data(df: pd.DataFrame):
         plt.title(col, fontweight='bold')
         plt.tight_layout()
         plt.savefig(f'./trained_models_plots/{col}.jpg', dpi=200)
+        plt.show()
+        plt.show()
+        plt.close()
+        plt.figure(figsize=(5, 5))
+        residuals = y_pred - y_test
+        standardised_residuals = (residuals-np.mean(residuals))/np.std(residuals)
+        sm.qqplot(standardised_residuals, line='45', color='#e63946')
+        plt.title(f'{col} - Q-Q plot', fontweight='bold')
+        plt.savefig(f'./trained_models_plots/{col}_residuals.jpg', dpi=200)
         plt.show()
 
 
