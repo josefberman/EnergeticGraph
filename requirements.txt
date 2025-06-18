@@ -1,0 +1,38 @@
+# Core data science and machine learning
+numpy>=1.24.0
+pandas>=2.0.0
+scikit-learn>=1.3.0
+matplotlib>=3.7.0
+statsmodels>=0.14.0
+
+# Chemistry and molecular descriptors
+rdkit>=2023.9.1
+
+# Web scraping
+beautifulsoup4>=4.12.0
+
+# LangChain ecosystem
+langchain>=0.1.0
+langchain-core>=0.1.0
+langchain-community>=0.0.20
+langchain-openai>=0.0.8
+langchain-nvidia-ai-endpoints>=0.0.11
+langchain-huggingface>=0.0.3
+langgraph>=0.0.26
+
+# AI/ML embeddings and transformers
+sentence-transformers>=2.2.0
+openai>=1.12.0
+
+# Vector database
+chromadb>=0.4.0
+
+# Environment management
+python-dotenv>=1.0.0
+
+# Jupyter notebook support (for plots.ipynb)
+jupyter>=1.0.0
+ipykernel>=6.25.0
+
+# File format support
+openpyxl>=3.1.0 
