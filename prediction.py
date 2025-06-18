@@ -14,7 +14,7 @@ from sklearn.kernel_ridge import KernelRidge
 from sklearn.metrics import r2_score, root_mean_squared_error, mean_absolute_error
 from sklearn.decomposition import PCA, KernelPCA
 from sklearn.neighbors import KNeighborsRegressor
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 import matplotlib.pyplot as plt
 from langchain_core.tools import tool
 import statsmodels.api as sm
@@ -247,6 +247,11 @@ def train_data(df: pd.DataFrame):
     for col in df.iloc[:, :-2].columns:
         y = df[col]
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        scaler = MinMaxScaler()
+        X_train = scaler.fit_transform(X_train)
+        X_test = scaler.transform(X_test)
+        with open('./trained_models/scaler.pkl', 'wb') as f:
+            pickle.dump(scaler, f)
         y_train_mean = np.mean(y_train)
         param_grid = {"alpha": np.logspace(-10, 2, 50), "gamma": np.logspace(-10, -1, 50), "kernel": ['rbf']}
         grd_srch = GridSearchCV(KernelRidge(), param_grid, cv=5, scoring='neg_mean_squared_error', verbose=0)
@@ -312,6 +317,9 @@ def predict_properties(smiles: str) -> dict:
     :return: Dictionary with predicted values
     """
     descriptor = np.array(create_descriptor(smiles)).reshape(1, -1)
+    with open('./trained_models/scaler.pkl', 'rb') as f:
+        scaler = pickle.load(f)
+    descriptor = scaler.transform([descriptor])
     property_list = ['Density', 'Detonation velocity', 'Explosion capacity', 'Explosion pressure', 'Explosion heat',
                      'Solid phase formation enthalpy']
     predictions = {}
