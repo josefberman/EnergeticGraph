@@ -10,22 +10,24 @@ from auxiliary import allenai_specter_pretrained_embeddings, ChemBERT_ChEMBL_pre
 import warnings
 warnings.filterwarnings("ignore")
 import numpy as np
+import pandas as pd
 
 class RAGEvaluator:
     def __init__(self):
         self.queries = [
-            "Heat of formation and enthalpy of explosion of nitramine‐based energetics",
-            "Crystal density and packing efficiency effects on detonation velocity",
-            "Impact and friction sensitivity measurements of high-nitrogen compounds",
-            "Thermal decomposition kinetics and activation energy of nitrate-ester propellants",
-            "Gas‐volume generation and combustion products in composite propellants",
-            "Viscosity and rheological behavior of energetic plasticizer formulations",
-            "Crystal morphology influence on mechanical strength of pressed explosive pellets",
-            "Oxygen balance and theoretical detonation pressure of fuel-rich mixtures",
-            "Heat capacity and thermal conductivity of solid energetics at cryogenic temperatures",
-            "Sensitivity and performance trade-offs in metalized energetic formulations (Al, Mg additives)",
+            # Pyrotechnics and Fireworks
+            "Pyrotechnic composition formulation and color emission spectra",
+            "Firework shell design and aerial display performance",
+            "Smoke generation and obscuration properties of pyrotechnic mixtures",
+            "Sparkler composition and burning behavior analysis",
+            "Pyrotechnic delay mechanisms and timing precision",
+            "Firework safety and hazard assessment protocols",
+            "Pyrotechnic material storage and transportation regulations",
+            "Smoke bomb formulation and dispersal characteristics",
+            "Firework launch system design and trajectory control",
+            "Pyrotechnic material compatibility and aging effects",
             
-            # Additional 40 queries - Explosive Properties
+            # Explosive Properties
             "Detonation velocity and pressure measurements of high explosives",
             "Brisance and fragmentation effects of military explosives",
             "Shock sensitivity and initiation mechanisms of primary explosives",
@@ -228,49 +230,36 @@ class RAGEvaluator:
     
     def print_summary(self, results: Dict):
         """
-        Print a comprehensive summary of the evaluation results.
+        Create and save evaluation results as CSV format without printing to terminal.
         """
-        print("\n" + "=" * 60)
-        print("RAG EVALUATION SUMMARY")
-        print("=" * 60)
+        # Create dataframe from results
+        data = []
+        for i, result in enumerate(results['individual_results']):
+            if 'error' not in result:
+                row = {'Query_Index': i+1, 'Query': result['query']}
+                # Add precision@k values
+                for k in range(1, 11):
+                    row[f'Precision@{k}'] = result['precision_at_k'][f'precision@{k}']
+                row['Total_Retrieved'] = result['total_retrieved']
+                row['Total_Relevant'] = result['total_relevant']
+                data.append(row)
+            else:
+                # Handle failed queries
+                row = {'Query_Index': i+1, 'Query': result['query'], 'Error': result['error']}
+                for k in range(1, 11):
+                    row[f'Precision@{k}'] = 0.0
+                row['Total_Retrieved'] = 0
+                row['Total_Relevant'] = 0
+                data.append(row)
         
-        summary = results['overall_summary']
-        precision_at_k = results['overall_precision_at_k']
+        # Create DataFrame
+        df = pd.DataFrame(data)
         
-        print(f"Total queries evaluated: {results['total_queries']}")
-        print(f"Successful queries: {results['successful_queries']}")
-        print(f"Failed queries: {results['total_queries'] - results['successful_queries']}")
+        # Save to CSV silently
+        csv_filename = "rag_evaluation_results.csv"
+        df.to_csv(csv_filename, index=False)
         
-        if 'avg_total_retrieved' in summary:
-            print(f"\nAverage documents retrieved per query: {summary['avg_total_retrieved']:.2f}")
-            print(f"Average relevant documents per query: {summary['avg_total_relevant']:.2f}")
-        
-        print("\nPrecision@k Results:")
-        print("-" * 30)
-        for k in range(1, 11):
-            if f"precision@{k}" in precision_at_k:
-                print(f"Precision@{k:2d}: {precision_at_k[f'precision@{k}']:.3f}")
-        
-        print("\nDetailed Statistics:")
-        print("-" * 30)
-        for k in range(1, 11):
-            if f"avg_precision@{k}" in summary:
-                print(f"Precision@{k:2d} - Avg: {summary[f'avg_precision@{k}']:.3f}, "
-                      f"Std: {summary[f'std_precision@{k}']:.3f}, "
-                      f"Min: {summary[f'min_precision@{k}']:.3f}, "
-                      f"Max: {summary[f'max_precision@{k}']:.3f}")
-        
-        # Show best and worst performing queries
-        successful_results = [r for r in results['individual_results'] if 'error' not in r]
-        if successful_results:
-            best_query = max(successful_results, key=lambda x: x['precision_at_k']['precision@10'])
-            worst_query = min(successful_results, key=lambda x: x['precision_at_k']['precision@10'])
-            
-            print(f"\nBest performing query (Precision@10: {best_query['precision_at_k']['precision@10']:.3f}):")
-            print(f"  {best_query['query']}")
-            
-            print(f"\nWorst performing query (Precision@10: {worst_query['precision_at_k']['precision@10']:.3f}):")
-            print(f"  {worst_query['query']}")
+        return df
     
     def save_results(self, results: Dict, filename: str = "rag_evaluation_results.json"):
         """
