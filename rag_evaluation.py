@@ -6,7 +6,7 @@ import re
 from collections import defaultdict
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
-from auxiliary import ChemBERT_ChEMBL_pretrained_embeddings
+from auxiliary import allenai_specter_pretrained_embeddings, ChemBERT_ChEMBL_pretrained_embeddings
 import warnings
 warnings.filterwarnings("ignore")
 import numpy as np
@@ -14,72 +14,84 @@ import numpy as np
 class RAGEvaluator:
     def __init__(self):
         self.queries = [
-            {
-                "query": "Heat of formation and enthalpy of explosion of nitramine‐based energetics",
-                "keywords": ["heat of formation", "enthalpy of explosion", "nitramine", "thermochemistry", "calorimetry", "DFT calculations"]
-            },
-            {
-                "query": "Crystal density and packing efficiency effects on detonation velocity",
-                "keywords": ["crystal density", "packing efficiency", "detonation velocity", "X-ray diffraction", "unit-cell parameters", "pycnometry"]
-            },
-            {
-                "query": "Impact and friction sensitivity measurements of high-nitrogen compounds",
-                "keywords": ["impact sensitivity", "friction sensitivity", "BAM drop-weight", "Peters friction tester", "high-nitrogen", "safety parameters"]
-            },
-            {
-                "query": "Thermal decomposition kinetics and activation energy of nitrate-ester propellants",
-                "keywords": ["thermal decomposition", "kinetics", "activation energy", "DSC/TGA", "Arrhenius plot", "decomposition intermediates"]
-            },
-            {
-                "query": "Gas‐volume generation and combustion products in composite propellants",
-                "keywords": ["gas generation", "combustion products", "composite propellant", "burning rate", "gas chromatography", "CO", "CO2", "N2 yields"]
-            },
-            {
-                "query": "Viscosity and rheological behavior of energetic plasticizer formulations",
-                "keywords": ["viscosity", "rheology", "plasticizer", "shear rate", "viscoelastic modulus", "temperature dependence"]
-            },
-            {
-                "query": "Crystal morphology influence on mechanical strength of pressed explosive pellets",
-                "keywords": ["crystal morphology", "pellet compression", "mechanical strength", "SEM imaging", "granulometry", "hardness test"]
-            },
-            {
-                "query": "Oxygen balance and theoretical detonation pressure of fuel-rich mixtures",
-                "keywords": ["oxygen balance", "detonation pressure", "thermochemical code", "Cheetah", "fuel-rich", "equilibrium composition", "Chapman–Jouguet point"]
-            },
-            {
-                "query": "Heat capacity and thermal conductivity of solid energetics at cryogenic temperatures",
-                "keywords": ["heat capacity", "thermal conductivity", "cryogenic", "laser-flash analysis", "calorimeter", "thermal diffusivity"]
-            },
-            {
-                "query": "Sensitivity and performance trade-offs in metalized energetic formulations (Al, Mg additives)",
-                "keywords": ["metalized formulation", "aluminum particles", "magnesium additives", "sensitivity", "specific impulse", "burn-rate enhancement"]
-            }
+            "Heat of formation and enthalpy of explosion of nitramine‐based energetics",
+            "Crystal density and packing efficiency effects on detonation velocity",
+            "Impact and friction sensitivity measurements of high-nitrogen compounds",
+            "Thermal decomposition kinetics and activation energy of nitrate-ester propellants",
+            "Gas‐volume generation and combustion products in composite propellants",
+            "Viscosity and rheological behavior of energetic plasticizer formulations",
+            "Crystal morphology influence on mechanical strength of pressed explosive pellets",
+            "Oxygen balance and theoretical detonation pressure of fuel-rich mixtures",
+            "Heat capacity and thermal conductivity of solid energetics at cryogenic temperatures",
+            "Sensitivity and performance trade-offs in metalized energetic formulations (Al, Mg additives)",
+            
+            # Additional 40 queries - Explosive Properties
+            "Detonation velocity and pressure measurements of high explosives",
+            "Brisance and fragmentation effects of military explosives",
+            "Shock sensitivity and initiation mechanisms of primary explosives",
+            "Explosive power and blast wave propagation in air",
+            "Detonation temperature and reaction zone structure",
+            "Explosive yield and energy release efficiency",
+            "Detonation wave stability and failure diameter",
+            "Explosive performance comparison using cylinder test",
+            "Detonation products analysis and gas composition",
+            "Explosive sensitivity to electrostatic discharge",
+            
+            # Propellant Properties
+            "Burning rate and pressure exponent of solid propellants",
+            "Specific impulse and thrust characteristics of rocket propellants",
+            "Propellant grain geometry and regression behavior",
+            "Combustion efficiency and nozzle performance",
+            "Propellant stability and aging characteristics",
+            "Grain stress analysis and structural integrity",
+            "Propellant ignition delay and flame spreading",
+            "Combustion chamber pressure oscillations",
+            "Propellant density and volumetric loading",
+            "Thrust vectoring and control system performance",
+            
+            # Sensitivity and Safety
+            "Drop weight impact sensitivity of energetic materials",
+            "Friction sensitivity using BAM fallhammer apparatus",
+            "Electrostatic discharge sensitivity measurements",
+            "Thermal stability and decomposition onset temperature",
+            "Sensitivity to mechanical shock and vibration",
+            "Compatibility testing with materials and solvents",
+            "Sensitivity to electromagnetic radiation",
+            "Aging effects on sensitivity and performance",
+            "Sensitivity correlation with molecular structure",
+            "Safety assessment and hazard classification",
+            
+            # Synthesis and Characterization
+            "Synthesis of high-nitrogen energetic compounds",
+            "Crystallization and polymorph control of explosives",
+            "Particle size distribution and morphology control",
+            "Coating and surface modification of energetic particles",
+            "Characterization using X-ray diffraction and spectroscopy",
+            "Thermal analysis techniques for energetic materials",
+            "Microscopy and imaging of explosive crystals",
+            "Spectroscopic analysis of decomposition products",
+            "Mechanical properties and stress-strain behavior",
+            "Surface area and porosity measurements",
+            
+            # Performance and Applications
+            "Energetic material selection for specific applications",
+            "Performance optimization for military applications",
+            "Environmental impact and disposal considerations",
+            "Cost-effectiveness and manufacturing scalability",
+            "Regulatory compliance and safety standards",
+            "Performance modeling and simulation approaches",
+            "Field testing and validation procedures",
+            "Performance degradation and shelf life",
+            "Novel energetic formulations and composites",
+            "Performance comparison across different material classes"
         ]
-    
-    def evaluate_relevance(self, content: str, keywords: List[str]) -> bool:
-        """
-        Evaluate if a document content is relevant based on keyword presence.
-        Returns True if at least 2 keywords are found in the content.
-        """
-        content_lower = content.lower()
-        keyword_count = 0
-        
-        for keyword in keywords:
-            # Handle special characters in keywords
-            # For regular keywords, use word boundaries
-            pattern = r'\b' + re.escape(keyword.lower()) + r'\b'
-            if re.search(pattern, content_lower):
-                keyword_count += 1
-        
-        # Consider relevant if at least 2 keywords are found
-        return keyword_count >= 2
     
     def calculate_semantic_similarity(self, query, content):
         model = ChemBERT_ChEMBL_pretrained_embeddings()
         query_embedding = model.embed_documents([query])  # Wrap in list to get 2D array
         content_embedding = model.embed_documents([content])  # Wrap in list to get 2D array
         similarity = cosine_similarity(query_embedding, content_embedding)[0][0]
-        return similarity >= 0.9
+        return similarity >= 0.95
     
     def calculate_precision_at_k(self, relevant_docs: List[bool], k: int) -> float:
         """
@@ -92,15 +104,11 @@ class RAGEvaluator:
         relevant_count = sum(relevant_docs[:k])
         return relevant_count / k
     
-    def evaluate_query(self, query_data: Dict, max_k: int = 10) -> Dict:
+    def evaluate_query(self, query: str, max_k: int = 10) -> Dict:
         """
         Evaluate a single query and return precision@k metrics.
         """
-        query = query_data["query"]
-        keywords = query_data["keywords"]
-        
         print(f"\nEvaluating query: {query}")
-        print(f"Keywords: {', '.join(keywords)}")
         
         try:
             # Retrieve documents using the RAG module
@@ -115,7 +123,6 @@ class RAGEvaluator:
                 title = doc.get('Title', 'Unknown Title')
                 authors = doc.get('Authors', 'Unknown Authors')
                 
-                # is_relevant = self.evaluate_relevance(content, keywords)
                 is_relevant = self.calculate_semantic_similarity(query, content)
                 relevance_scores.append(is_relevant)
                 
@@ -140,7 +147,6 @@ class RAGEvaluator:
             
             results = {
                 'query': query,
-                'keywords': keywords,
                 'total_retrieved': total_retrieved,
                 'total_relevant': total_relevant,
                 'precision_at_k': precision_at_k,
@@ -159,7 +165,6 @@ class RAGEvaluator:
             print(f"  Error evaluating query: {str(e)}")
             return {
                 'query': query,
-                'keywords': keywords,
                 'error': str(e),
                 'total_retrieved': 0,
                 'total_relevant': 0,
@@ -178,9 +183,9 @@ class RAGEvaluator:
         all_results = []
         overall_stats = defaultdict(list)
         
-        for i, query_data in enumerate(self.queries):
-            print(f"\nQuery {i+1}/10:")
-            result = self.evaluate_query(query_data, max_k)
+        for i, query in enumerate(self.queries):
+            print(f"\nQuery {i+1}/50:")
+            result = self.evaluate_query(query, max_k)
             all_results.append(result)
             
             # Collect statistics for overall analysis
@@ -283,7 +288,7 @@ def main():
     evaluator = RAGEvaluator()
     
     print("RAG Module Evaluation Tool")
-    print("This tool will evaluate the RAG module using 10 predefined queries")
+    print("This tool will evaluate the RAG module using 50 predefined queries")
     print("and calculate precision@k metrics up to k=10.")
     print("\nNote: This evaluation may take several minutes due to API rate limiting.")
     

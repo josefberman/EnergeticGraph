@@ -8,7 +8,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from openai import embeddings
 from sentence_transformers import SentenceTransformer
 from langchain_core.tools import tool
-from auxiliary import ChemBERT_ChEMBL_pretrained_embeddings
+from auxiliary import all_mini_l6_v2_pretrained_embeddings, ChemBERT_ChEMBL_pretrained_embeddings, allenai_specter_pretrained_embeddings
 
 
 @tool
@@ -19,9 +19,9 @@ def retrieve_context(query: str) -> list:
     :return: a list that contains dictionaries, each with a relevant content chunk (key 'Content'),
      title of the paper (key 'Title') and authors of the paper (key 'Authors').
     """
-    loader = ArxivLoader(query=query, load_max_docs=10)
+    loader = ArxivLoader(query=query, load_max_docs=100, top_k_results=10)
     # text_splitter = TokenTextSplitter(chunk_size=800, chunk_overlap=80, encoding_name="cl100k_base")
-    text_splitter = SemanticChunker(embeddings=ChemBERT_ChEMBL_pretrained_embeddings())
+    text_splitter = SemanticChunker(embeddings=all_mini_l6_v2_pretrained_embeddings())
     doc_splits = loader.load_and_split(text_splitter)
     # vectorstore = Chroma.from_documents(documents=doc_splits, collection_name='energetic_docs',
     #                                     embedding=NVIDIAEmbeddings())
@@ -36,7 +36,7 @@ def retrieve_context(query: str) -> list:
     vectorstore = Chroma.from_documents(documents=doc_splits, collection_name='energetic_docs',
                                         embedding=ChemBERT_ChEMBL_pretrained_embeddings())
 
-    retriever = vectorstore.as_retriever(search_type='similarity_score_threshold', search_kwargs={'k': 10, 'score_threshold': 0.9})
+    retriever = vectorstore.as_retriever(search_kwargs={'k': 10})
     retrieved_chunks = retriever.invoke(query)
     results = []
     for i, chunk in enumerate(retrieved_chunks):
