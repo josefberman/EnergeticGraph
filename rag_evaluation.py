@@ -232,11 +232,31 @@ class RAGEvaluator:
         """
         Create and save evaluation results as CSV format without printing to terminal.
         """
+        # Define field categories based on query groups
+        field_categories = {
+            # Pyrotechnics and Fireworks (queries 1-10)
+            **{i: "Pyrotechnics and Fireworks" for i in range(10)},
+            # Explosive Properties (queries 11-20)
+            **{i: "Explosive Properties" for i in range(10, 20)},
+            # Propellant Properties (queries 21-30)
+            **{i: "Propellant Properties" for i in range(20, 30)},
+            # Sensitivity and Safety (queries 31-40)
+            **{i: "Sensitivity and Safety" for i in range(30, 40)},
+            # Synthesis and Characterization (queries 41-50)
+            **{i: "Synthesis and Characterization" for i in range(40, 50)},
+            # Performance and Applications (queries 51-60)
+            **{i: "Performance and Applications" for i in range(50, 60)}
+        }
+        
         # Create dataframe from results
         data = []
         for i, result in enumerate(results['individual_results']):
             if 'error' not in result:
-                row = {'Query_Index': i+1, 'Query': result['query']}
+                row = {
+                    'Query_Index': i+1, 
+                    'Query': result['query'],
+                    'Field': field_categories.get(i, "Unknown")
+                }
                 # Add precision@k values
                 for k in range(1, 11):
                     row[f'Precision@{k}'] = result['precision_at_k'][f'precision@{k}']
@@ -245,7 +265,12 @@ class RAGEvaluator:
                 data.append(row)
             else:
                 # Handle failed queries
-                row = {'Query_Index': i+1, 'Query': result['query'], 'Error': result['error']}
+                row = {
+                    'Query_Index': i+1, 
+                    'Query': result['query'],
+                    'Field': field_categories.get(i, "Unknown"),
+                    'Error': result['error']
+                }
                 for k in range(1, 11):
                     row[f'Precision@{k}'] = 0.0
                 row['Total_Retrieved'] = 0
@@ -260,14 +285,6 @@ class RAGEvaluator:
         df.to_csv(csv_filename, index=False)
         
         return df
-    
-    def save_results(self, results: Dict, filename: str = "rag_evaluation_results.json"):
-        """
-        Save evaluation results to a JSON file.
-        """
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(results, f, indent=2, ensure_ascii=False)
-        print(f"\nResults saved to {filename}")
 
 
 def main():
@@ -286,9 +303,6 @@ def main():
     
     # Print summary
     evaluator.print_summary(results)
-    
-    # Save results
-    evaluator.save_results(results)
     
     print("\nEvaluation completed!")
 
