@@ -152,7 +152,7 @@ class MolecularOptimizationAgent:
             print(f"Max iterations: {self.max_iterations}")
         
         # Get initial molecule properties
-        initial_properties = predict_properties(starting_molecule)
+        initial_properties = predict_properties.invoke(starting_molecule)
         initial_score = self.calculate_fitness_score(initial_properties, target_properties, weights)
         state.best_score = initial_score
         
@@ -199,14 +199,14 @@ class MolecularOptimizationAgent:
                     
                     try:
                         # Validate the modification
-                        validation = validate_molecule_structure(modified_smiles)
+                        validation = validate_molecule_structure.invoke(modified_smiles)
                         if not validation.get('valid', False):
                             if verbose:
                                 print(f"    -> Invalid modification: {validation.get('error', 'Unknown error')}")
                             continue
                         
                         # Predict properties
-                        properties = predict_properties(modified_smiles)
+                        properties = predict_properties.invoke(modified_smiles)
                         score = self.calculate_fitness_score(properties, target_properties, weights)
                         
                         new_candidate = {
@@ -275,7 +275,7 @@ class MolecularOptimizationAgent:
             'weights': weights,
             'best_molecule': state.best_molecule,
             'best_score': state.best_score,
-            'best_properties': predict_properties(state.best_molecule) if state.best_molecule != starting_molecule else initial_properties,
+            'best_properties': predict_properties.invoke(state.best_molecule) if state.best_molecule != starting_molecule else initial_properties,
             'total_iterations': iteration + 1,
             'search_history': state.search_history,
             'visited_molecules': len(visited_smiles)
@@ -323,7 +323,7 @@ class MolecularOptimizationAgent:
         
         try:
             # Get current molecule properties
-            current_properties = predict_properties(smiles)
+            current_properties = predict_properties.invoke(smiles)
             
             # Create search queries for modifications
             search_queries = self._generate_modification_queries(smiles, current_properties, target_properties)
@@ -745,7 +745,7 @@ class MolecularOptimizationAgent:
             except queue.Empty:
                 if verbose:
                     print(f"    Agent modification generation timed out, using fallback")
-                return generate_molecular_modifications(smiles, max_modifications=5)
+                return generate_molecular_modifications.invoke(smiles, max_modifications=5)
             
             # Check for exceptions
             try:
@@ -779,7 +779,7 @@ class MolecularOptimizationAgent:
             if verbose:
                 print(f"    Error in agent-based modification generation: {e}")
             # Fallback to direct tool usage
-            return generate_molecular_modifications(smiles, max_modifications=5)
+            return generate_molecular_modifications.invoke(smiles, max_modifications=5)
     
     def process_csv_input(self, csv_file_path: str, verbose: bool = True) -> Dict[str, Any]:
         """Process CSV input and run optimization without starting molecule"""
@@ -879,7 +879,7 @@ class MolecularOptimizationAgent:
         
         for smiles in fallback_molecules:
             try:
-                validation = validate_molecule_structure(smiles)
+                validation = validate_molecule_structure.invoke(smiles)
                 if validation.get('valid', False):
                     if verbose:
                         print(f"  Using fallback molecule: {smiles}")

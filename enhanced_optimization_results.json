@@ -1,0 +1,40 @@
+{
+  "starting_molecule": "Cc1c(cc(cc1[N+]([O-])=O)[N+]([O-])=O)[N+]([O-])=O",
+  "target_properties": {
+    "Density": 1.8,
+    "Detonation velocity": 8000.0,
+    "Explosion capacity": 0.9,
+    "Explosion pressure": 250.0,
+    "Explosion heat": 1200.0,
+    "Solid phase formation enthalpy": 60.0
+  },
+  "weights": {
+    "Density": 1.0,
+    "Detonation velocity": 1.0,
+    "Explosion capacity": 1.0,
+    "Explosion pressure": 1.0,
+    "Explosion heat": 1.0,
+    "Solid phase formation enthalpy": 1.0
+  },
+  "best_molecule": "Cc1c(cc(cc1[N+]([O-])=O)[N+]([O-])=O)[N+]([O-])=O",
+  "best_score": -107.59988098970058,
+  "best_properties": {
+    "Density": 1.5995672345161438,
+    "Detonation velocity": 6815.749908447266,
+    "Explosion capacity": 579.8298139507606,
+    "Explosion pressure": 19.763572216033936,
+    "Explosion heat": 5252.560905605555,
+    "Solid phase formation enthalpy": -167.18847042362904
+  },
+  "total_iterations": 1,
+  "search_history": [
+    {
+      "iteration": 1,
+      "beam_size": 0,
+      "best_score": -107.59988098970058,
+      "best_molecule": "Cc1c(cc(cc1[N+]([O-])=O)[N+]([O-])=O)[N+]([O-])=O",
+      "candidates": []
+    }
+  ],
+  "visited_molecules": 1
+}
