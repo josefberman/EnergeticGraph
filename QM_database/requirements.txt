@@ -1,0 +1,14 @@
+psi4
+numpy
+pandas
+scipy
+matplotlib
+seaborn
+rdkit
+ase
+phonopy
+pymatgen
+openpyxl
+tqdm
+joblib
+psutil 
