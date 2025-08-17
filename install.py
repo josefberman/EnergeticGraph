@@ -4,7 +4,6 @@ Molecular Optimization Agent System Installation Script
 Handles the RDKit warning and provides a clean installation process.
 """
 
-import os
 import sys
 import subprocess
 import warnings

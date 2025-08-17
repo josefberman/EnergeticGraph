@@ -2,12 +2,11 @@
 import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning, module="importlib._bootstrap")
 
-from typing import List, Dict, Any, Tuple, Optional, Literal
+from typing import List, Dict, Any, Optional
 import pandas as pd
-import numpy as np
 from rdkit import Chem
-from rdkit.Chem import AllChem, Descriptors
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from rdkit import RDLogger
+from langchain_core.messages import HumanMessage
 from langchain_openai.chat_models import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph, MessagesState
@@ -23,11 +22,15 @@ from RAG import retrieve_context
 import os
 from dotenv import load_dotenv
 import json
-from dataclasses import dataclass, asdict
-from collections import deque
-import heapq
+from dataclasses import dataclass
 
 load_dotenv()
+
+# Suppress RDKit error logs during parsing to reduce console noise
+try:
+    RDLogger.DisableLog('rdApp.error')
+except Exception:
+    pass
 
 @dataclass
 class OptimizationState:
@@ -171,6 +174,7 @@ class MolecularOptimizationAgent:
         }]
         
         visited_smiles = {starting_molecule}
+        previous_best_score = state.best_score
         
         # Main optimization loop
         for iteration in range(self.max_iterations):
@@ -223,7 +227,9 @@ class MolecularOptimizationAgent:
                         visited_smiles.add(modified_smiles)
                         
                         if verbose:
-                            print(f"    -> {modified_smiles[:50]}... (score: {score:.4f})")
+                            print(
+                                f"    -> SMILES: {modified_smiles} | modification: {modification.get('description', 'Unknown modification')} | score: {score:.4f}"
+                            )
                         
                         # Update best molecule if better
                         if score > state.best_score:
@@ -256,11 +262,12 @@ class MolecularOptimizationAgent:
             
             # Check for convergence
             if len(beam) > 0:
-                score_improvement = beam[0]['score'] - state.best_score
-                if abs(score_improvement) < self.convergence_threshold:
+                score_improvement = state.best_score - previous_best_score
+                if score_improvement < self.convergence_threshold:
                     if verbose:
-                        print(f"\nConvergence reached (improvement < {self.convergence_threshold})")
+                        print(f"\nConvergence reached (improvement {score_improvement:.4f} < {self.convergence_threshold})")
                     break
+                previous_best_score = state.best_score
             
             # Early stopping if no valid modifications
             if not beam:
@@ -743,8 +750,7 @@ class MolecularOptimizationAgent:
             try:
                 states = result_queue.get(timeout=30)  # 30 second timeout
             except queue.Empty:
-                if verbose:
-                    print(f"    Agent modification generation timed out, using fallback")
+                # Timed out – use fallback tool-based generator
                 return generate_molecular_modifications.invoke(smiles, max_modifications=5)
             
             # Check for exceptions
@@ -754,30 +760,55 @@ class MolecularOptimizationAgent:
             except queue.Empty:
                 pass  # No exception
             
-            # Extract modifications from the response
-            modifications = []
+            # Extract modifications from the response with strict SMILES parsing and RDKit validation
+            import re
+            modifications: List[Dict[str, Any]] = []
+            seen_local: set = set()
+            strict_pattern = r'(?<![A-Za-z0-9])(?=[^\s]*[\[\]()0-9=#@+\-\\/])(?:\[[^\]]+\]|Br|Cl|[BCNOFPSI][lr]?|[A-Z][a-z]?|[=#@+\-]|\\|/|\(|\)|\d)+'
             for message in states['messages']:
-                if hasattr(message, 'content') and message.content:
-                    # Parse the response to extract modifications
-                    # This is a simplified approach - in practice, you'd want more sophisticated parsing
-                    if 'modification' in message.content.lower() or 'smiles' in message.content.lower():
-                        # Try to extract SMILES patterns from the response
-                        import re
-                        smiles_pattern = r'[A-Z][a-z]?[0-9]*[A-Za-z0-9]*\[?[A-Za-z0-9@+\-\(\)=#:]*\]?[A-Za-z0-9@+\-\(\)=#:]*'
-                        found_smiles = re.findall(smiles_pattern, message.content)
-                        
-                        for found_smiles_str in found_smiles:
-                            if found_smiles_str != smiles and len(found_smiles_str) > 5:
-                                modifications.append({
-                                    'smiles': found_smiles_str,
-                                    'description': f'Agent-generated modification: {found_smiles_str[:30]}...'
-                                })
-            
+                text = getattr(message, 'content', '') or ''
+                if not text:
+                    continue
+                candidates = re.findall(strict_pattern, text)
+                for cand in candidates:
+                    cand = cand.strip().strip('.,;:')
+                    if not cand or cand == smiles:
+                        continue
+                    if not re.search(r'(C|N|O|S|P|F|Cl|Br|I|c|n|o|s)', cand):
+                        continue
+                    try:
+                        mol = Chem.MolFromSmiles(cand)
+                    except Exception:
+                        mol = None
+                    if mol is None:
+                        continue
+                    # Optional sanitize to weed out invalid constructs
+                    try:
+                        Chem.SanitizeMol(mol)
+                    except Exception:
+                        continue
+                    if cand in seen_local:
+                        continue
+                    seen_local.add(cand)
+                    # Add validation for parity with tool-generated modifications
+                    try:
+                        validation = validate_molecule_structure.invoke(cand)
+                    except Exception:
+                        validation = {'valid': True}
+                    modifications.append({
+                        'smiles': cand,
+                        'modified_smiles': cand,
+                        'description': f'Agent-generated modification: {cand[:30]}...',
+                        'validation': validation
+                    })
+
+            if not modifications:
+                return generate_molecular_modifications.invoke(smiles, max_modifications=5)
+
             return modifications
             
         except Exception as e:
-            if verbose:
-                print(f"    Error in agent-based modification generation: {e}")
+            # Error – use fallback tool-based generator
             # Fallback to direct tool usage
             return generate_molecular_modifications.invoke(smiles, max_modifications=5)
     
@@ -852,7 +883,7 @@ class MolecularOptimizationAgent:
                         smiles = self._get_smiles_from_molecule_info(molecule_info)
                         if smiles:
                             # Validate the molecule
-                            validation = validate_molecule_structure(smiles)
+                            validation = validate_molecule_structure.invoke(smiles)
                             if validation.get('valid', False):
                                 if verbose:
                                     print(f"  Valid starting molecule found: {smiles}")
@@ -994,7 +1025,7 @@ class MolecularOptimizationAgent:
             }
             
             return common_smiles.get(name.upper(), None)
-            
+
         except:
             return None
     

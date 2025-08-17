@@ -4,7 +4,6 @@ Script to check the data structure and identify issues
 """
 
 import pandas as pd
-import numpy as np
 
 def check_data_structure():
     """Check the data structure"""

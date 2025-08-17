@@ -2,12 +2,11 @@
 import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning, module="importlib._bootstrap")
 
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Optional
 from rdkit import Chem
-from rdkit.Chem import AllChem, Descriptors, rdMolDescriptors
+from rdkit.Chem import Descriptors
 from rdkit.Chem.FilterCatalog import FilterCatalog, FilterCatalogParams
 from langchain_core.tools import tool
-import numpy as np
 
 class MolecularValidator:
     """Validates molecular structures for energetic materials"""

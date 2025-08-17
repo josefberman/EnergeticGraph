@@ -3,8 +3,7 @@
     Daniel C. Elton
     License : MIT
 """
-from rdkit import Chem
-from rdkit.Chem import Descriptors, AddHs
+from rdkit.Chem import Descriptors
 from collections import defaultdict
 import numpy as np
 from rdkit.Chem.Descriptors import _descList

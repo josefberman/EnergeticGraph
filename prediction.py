@@ -1,4 +1,3 @@
-import os.path
 import pickle
 from urllib.parse import quote
 from urllib.request import urlopen
@@ -6,20 +5,13 @@ from urllib.request import urlopen
 import numpy as np
 import pandas as pd
 from rdkit import Chem
-from sklearn.linear_model import ElasticNet
 from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.svm import SVR
-from sklearn.ensemble import RandomForestRegressor
 from sklearn.kernel_ridge import KernelRidge
 from sklearn.metrics import r2_score, root_mean_squared_error, mean_absolute_error
-from sklearn.decomposition import PCA, KernelPCA
-from sklearn.neighbors import KNeighborsRegressor
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler
 import matplotlib.pyplot as plt
 from langchain_core.tools import tool
 import statsmodels.api as sm
-
-from descriptors import custom_descriptor_set
 
 
 def get_nno2_count(smiles: str):

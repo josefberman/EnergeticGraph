@@ -5,7 +5,6 @@ Script to properly install PyMuPDF and fix the fitz module issue
 
 import subprocess
 import sys
-import importlib
 
 def install_pymupdf():
     """Install PyMuPDF properly"""

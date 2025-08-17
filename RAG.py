@@ -1,14 +1,8 @@
 from langchain_community.document_loaders import ArxivLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter, TokenTextSplitter
 from langchain_experimental.text_splitter import SemanticChunker
 from langchain_community.vectorstores import Chroma
-from langchain_nvidia_ai_endpoints.embeddings import NVIDIAEmbeddings
-from langchain_openai.embeddings import OpenAIEmbeddings
-from langchain_huggingface import HuggingFaceEmbeddings
-from openai import embeddings
-from sentence_transformers import SentenceTransformer
 from langchain_core.tools import tool
-from auxiliary import all_mini_l6_v2_pretrained_embeddings, ChemBERT_ChEMBL_pretrained_embeddings, allenai_specter_pretrained_embeddings
+from auxiliary import all_mini_l6_v2_pretrained_embeddings, ChemBERT_ChEMBL_pretrained_embeddings
 
 
 @tool
@@ -53,8 +47,12 @@ def retrieve_context(query: str) -> list:
         # vectorstore = Chroma.from_documents(documents=doc_splits, collection_name='energetic_docs',
         #                                     embedding=HuggingFaceEmbeddings(
         #                                         model_name="sentence-transformers/all-MiniLM-L6-v2"))
-        vectorstore = Chroma.from_documents(documents=doc_splits, collection_name='energetic_docs',
-                                            embedding=ChemBERT_ChEMBL_pretrained_embeddings())
+        # Build vectorstore with CPU/GPU-aware embeddings (handled in auxiliary)
+        vectorstore = Chroma.from_documents(
+            documents=doc_splits,
+            collection_name='energetic_docs',
+            embedding=ChemBERT_ChEMBL_pretrained_embeddings()
+        )
 
         retriever = vectorstore.as_retriever(search_kwargs={'k': 10})
         retrieved_chunks = retriever.invoke(query)

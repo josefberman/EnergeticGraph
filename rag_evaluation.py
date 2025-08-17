@@ -1,12 +1,9 @@
-import simplejson as json
 import time
-from typing import List, Dict, Tuple
+from typing import List, Dict
 from RAG import retrieve_context
-import re
 from collections import defaultdict
-from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
-from auxiliary import allenai_specter_pretrained_embeddings, ChemBERT_ChEMBL_pretrained_embeddings
+from auxiliary import ChemBERT_ChEMBL_pretrained_embeddings
 import warnings
 warnings.filterwarnings("ignore")
 import numpy as np

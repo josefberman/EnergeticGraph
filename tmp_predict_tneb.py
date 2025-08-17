@@ -1,0 +1,22 @@
+from prediction import predict_properties
+
+# 2,4,6-Trinitroethylbenzene SMILES (ethyl + trinitro at 2,4,6)
+SMILES_TNEB = "CCc1c(cc(cc1[N+]([O-])=O)[N+]([O-])=O)[N+]([O-])=O"
+
+props = predict_properties(SMILES_TNEB)
+order = [
+    'Density',
+    'Detonation velocity',
+    'Explosion capacity',
+    'Explosion pressure',
+    'Explosion heat',
+    'Solid phase formation enthalpy'
+]
+
+# Print as a single CSV line
+print(
+    ",".join(str(props[k]) for k in order)
+)
+
+
+
