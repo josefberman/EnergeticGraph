@@ -1,12 +1,12 @@
 {
   "starting_molecule": "Cc1c(cc(cc1[N+]([O-])=O)[N+]([O-])=O)[N+]([O-])=O",
   "target_properties": {
-    "Density": 1.76,
-    "Detonation velocity": 7400.0,
-    "Explosion capacity": 545.3,
-    "Explosion pressure": 27.0,
-    "Explosion heat": 960.0,
-    "Solid phase formation enthalpy": -125.0
+    "Density": 1.51,
+    "Detonation velocity": 7009.0,
+    "Explosion capacity": 621.9,
+    "Explosion pressure": 19.5,
+    "Explosion heat": 6033.9,
+    "Solid phase formation enthalpy": -9.36
   },
   "weights": {
     "Density": 1.0,
@@ -16,59 +16,56 @@
     "Explosion heat": 1.0,
     "Solid phase formation enthalpy": 1.0
   },
-  "best_molecule": "C",
-  "best_score": 0.15422647493107275,
+  "best_molecule": "Cc1c(cc(cc1[N+]([O-])=O)[N+]([O-])=O)[N+]([O-])=O",
+  "best_score": 0.9189130732232602,
   "best_properties": {
-    "Density": 1.3075674176216125,
-    "Detonation velocity": 2564.9687039107084,
-    "Explosion capacity": 962.4030348415472,
-    "Explosion pressure": 3.259209811090841,
-    "Explosion heat": 2567.2578283399343,
-    "Solid phase formation enthalpy": -330.06353759765625
+    "Density": 1.6441850662231445,
+    "Detonation velocity": 6740.7859422676265,
+    "Explosion capacity": 593.7601580188202,
+    "Explosion pressure": 18.558814405412704,
+    "Explosion heat": 4918.900734886527,
+    "Solid phase formation enthalpy": -146.29327392578125
   },
-  "total_iterations": 2,
+  "total_iterations": 1,
   "search_history": [
     {
       "iteration": 1,
-      "beam_size": 4,
-      "best_score": 0.15422647493107275,
-      "best_molecule": "C",
+      "beam_size": 5,
+      "best_score": 0.9189130732232602,
+      "best_molecule": "Cc1c(cc(cc1[N+]([O-])=O)[N+]([O-])=O)[N+]([O-])=O",
       "candidates": [
         {
-          "smiles": "C",
+          "smiles": "Cc1c([N+](=O)[O-])cc([N+](=O)[O-])nc1[N+](=O)[O-]",
           "properties": {
-            "Density": 1.3075674176216125,
-            "Detonation velocity": 2564.9687039107084,
-            "Explosion capacity": 962.4030348415472,
-            "Explosion pressure": 3.259209811090841,
-            "Explosion heat": 2567.2578283399343,
-            "Solid phase formation enthalpy": -330.06353759765625
+            "Density": 1.6836464405059814,
+            "Detonation velocity": 7226.466370541602,
+            "Explosion capacity": 592.0100813914978,
+            "Explosion pressure": 21.982816864277993,
+            "Explosion heat": 5413.044356703758,
+            "Solid phase formation enthalpy": -60.3214111328125
           },
-          "score": 0.15422647493107275,
+          "score": 0.9151389675919404,
           "parent": "Cc1c(cc(cc1[N+]([O-])=O)[N+]([O-])=O)[N+]([O-])=O",
-          "modification": "Agent-generated modification: C...",
+          "modification": "Replaced carbon with nitrogen in aromatic ring",
           "iteration": 1,
           "validation": {
             "valid": true,
-            "warnings": [
-              "Molecular weight < 50 Da",
-              "No nitrogen atoms (important for energetic materials)"
-            ],
+            "warnings": [],
             "properties": {
-              "molecular_weight": 16.031300127999998,
-              "logp": 0.6361,
+              "molecular_weight": 228.013083848,
+              "logp": 1.11462,
               "hbd": 0,
-              "hba": 0,
-              "rotatable_bonds": 0,
-              "aromatic_rings": 0,
-              "heteroatoms": 0,
-              "nitrogen_count": 0,
-              "oxygen_count": 0,
-              "carbon_count": 1,
+              "hba": 7,
+              "rotatable_bonds": 3,
+              "aromatic_rings": 1,
+              "heteroatoms": 10,
+              "nitrogen_count": 4,
+              "oxygen_count": 6,
+              "carbon_count": 6,
               "energetic_groups": {
-                "nitro": 0,
+                "nitro": 3,
                 "azido": 0,
-                "nitroso": 0,
+                "nitroso": 3,
                 "nitramine": 0,
                 "tetrazole": 0,
                 "triazole": 0,
@@ -79,39 +76,37 @@
           }
         },
         {
-          "smiles": "[H][N+](=O)",
+          "smiles": "[H][N+]([O-])c1cc([N+](=O)[O-])cc([N+](=O)[O-])c1C",
           "properties": {
-            "Density": 1.7927093505859375,
-            "Detonation velocity": 11695.486420303583,
-            "Explosion capacity": 78.6627345588422,
-            "Explosion pressure": 46.56122574846813,
-            "Explosion heat": 20778.21632258594,
-            "Solid phase formation enthalpy": -258.62353515625
+            "Density": 1.6044846773147583,
+            "Detonation velocity": 6503.81101411581,
+            "Explosion capacity": 612.1413440705583,
+            "Explosion pressure": 17.12714124336344,
+            "Explosion heat": 4803.262050658464,
+            "Solid phase formation enthalpy": -117.2213134765625
           },
-          "score": -3.564653057774067,
+          "score": 0.9048038904033054,
           "parent": "Cc1c(cc(cc1[N+]([O-])=O)[N+]([O-])=O)[N+]([O-])=O",
-          "modification": "Agent-generated modification: [H][N+](=O)...",
+          "modification": "Removed terminal O atom",
           "iteration": 1,
           "validation": {
             "valid": true,
-            "warnings": [
-              "Molecular weight < 50 Da"
-            ],
+            "warnings": [],
             "properties": {
-              "molecular_weight": 31.005265072089998,
-              "logp": -1.7023,
+              "molecular_weight": 212.030745292,
+              "logp": 0.28992000000000023,
               "hbd": 1,
-              "hba": 2,
-              "rotatable_bonds": 0,
-              "aromatic_rings": 0,
-              "heteroatoms": 2,
-              "nitrogen_count": 1,
-              "oxygen_count": 1,
-              "carbon_count": 0,
+              "hba": 6,
+              "rotatable_bonds": 3,
+              "aromatic_rings": 1,
+              "heteroatoms": 8,
+              "nitrogen_count": 3,
+              "oxygen_count": 5,
+              "carbon_count": 7,
               "energetic_groups": {
-                "nitro": 0,
+                "nitro": 2,
                 "azido": 0,
-                "nitroso": 1,
+                "nitroso": 2,
                 "nitramine": 0,
                 "tetrazole": 0,
                 "triazole": 0,
@@ -122,90 +117,37 @@
           }
         },
         {
-          "smiles": "[H][N+]([O-])",
+          "smiles": "[H][N+]([O-])c1cc([N+](=O)[O-])c(C)c([N+](=O)[O-])c1",
           "properties": {
-            "Density": 1.7841383814811707,
-            "Detonation velocity": 11780.386561285704,
-            "Explosion capacity": 76.93249776746961,
-            "Explosion pressure": 46.041485423833365,
-            "Explosion heat": 21134.35032507032,
-            "Solid phase formation enthalpy": -264.68408203125
+            "Density": 1.6044846773147583,
+            "Detonation velocity": 6503.81101411581,
+            "Explosion capacity": 612.1413440705583,
+            "Explosion pressure": 17.12714124336344,
+            "Explosion heat": 4803.262050658464,
+            "Solid phase formation enthalpy": -117.2213134765625
           },
-          "score": -3.636952937897527,
+          "score": 0.9048038904033054,
           "parent": "Cc1c(cc(cc1[N+]([O-])=O)[N+]([O-])=O)[N+]([O-])=O",
-          "modification": "Agent-generated modification: [H][N+]([O-])...",
+          "modification": "Removed terminal O atom",
           "iteration": 1,
           "validation": {
             "valid": true,
-            "warnings": [
-              "Molecular weight < 50 Da"
-            ],
+            "warnings": [],
             "properties": {
-              "molecular_weight": 31.005813651999997,
-              "logp": -1.7023,
-              "hbd": 0,
-              "hba": 1,
-              "rotatable_bonds": 0,
-              "aromatic_rings": 0,
-              "heteroatoms": 2,
-              "nitrogen_count": 1,
-              "oxygen_count": 1,
-              "carbon_count": 0,
+              "molecular_weight": 212.030745292,
+              "logp": 0.28992000000000023,
+              "hbd": 1,
+              "hba": 6,
+              "rotatable_bonds": 3,
+              "aromatic_rings": 1,
+              "heteroatoms": 8,
+              "nitrogen_count": 3,
+              "oxygen_count": 5,
+              "carbon_count": 7,
               "energetic_groups": {
-                "nitro": 0,
+                "nitro": 2,
                 "azido": 0,
-                "nitroso": 0,
-                "nitramine": 0,
-                "tetrazole": 0,
-                "triazole": 0,
-                "furazan": 0,
-                "oxadiazole": 0
-              }
-            }
-          }
-        }
-      ]
-    },
-    {
-      "iteration": 2,
-      "beam_size": 1,
-      "best_score": 0.15422647493107275,
-      "best_molecule": "C",
-      "candidates": [
-        {
-          "smiles": "[NH+]",
-          "properties": {
-            "Density": 1.6921586394309998,
-            "Detonation velocity": 9389.144469946623,
-            "Explosion capacity": 269.6664978937479,
-            "Explosion pressure": 31.28465500283346,
-            "Explosion heat": 14783.04712062329,
-            "Solid phase formation enthalpy": -268.72796630859375
-          },
-          "score": -2.0741038363513282,
-          "parent": "[H][N+](=O)",
-          "modification": "Agent-generated modification: [NH+]...",
-          "iteration": 2,
-          "validation": {
-            "valid": true,
-            "warnings": [
-              "Molecular weight < 50 Da"
-            ],
-            "properties": {
-              "molecular_weight": 15.01035045209,
-              "logp": -1.7358,
-              "hbd": 0,
-              "hba": 0,
-              "rotatable_bonds": 0,
-              "aromatic_rings": 0,
-              "heteroatoms": 1,
-              "nitrogen_count": 1,
-              "oxygen_count": 0,
-              "carbon_count": 0,
-              "energetic_groups": {
-                "nitro": 0,
-                "azido": 0,
-                "nitroso": 0,
+                "nitroso": 2,
                 "nitramine": 0,
                 "tetrazole": 0,
                 "triazole": 0,
@@ -218,5 +160,5 @@
       ]
     }
   ],
-  "visited_molecules": 6
+  "visited_molecules": 7
 }

@@ -404,6 +404,8 @@ class MolecularOptimizationAgent:
         for result in rag_results:
             content = result.get('Content', '')
             title = result.get('Title', '')
+            authors = result.get('Authors', 'Unknown Authors')
+            year = result.get('Year', '')
             
             # Look for modification patterns in the content
             import re
@@ -432,6 +434,8 @@ class MolecularOptimizationAgent:
                             'smiles': modified_smiles,
                             'description': f'RAG-suggested {mod_type}',
                             'source': title,
+                            'authors': authors,
+                            'year': year,
                             'rag_content': content[:100] + "..."
                         })
         
@@ -877,7 +881,13 @@ class MolecularOptimizationAgent:
                     
                     for molecule_info in molecules:
                         if verbose:
-                            print(f"  Found molecule: {molecule_info.get('name', 'Unknown')}")
+                            src_title = molecule_info.get('source', 'Unknown Source')
+                            src_authors = molecule_info.get('authors', 'Unknown Authors')
+                            src_year = molecule_info.get('year', '')
+                            year_suffix = f" ({src_year})" if src_year else ""
+                            print(f"  Found molecule: {molecule_info.get('name', 'Unknown')}\n"
+                                  f"    Source: {src_title}{year_suffix}\n"
+                                  f"    Authors: {src_authors}")
                         
                         # Try to get SMILES for this molecule
                         smiles = self._get_smiles_from_molecule_info(molecule_info)
@@ -970,6 +980,8 @@ class MolecularOptimizationAgent:
         for result in rag_results:
             content = result.get('Content', '')
             title = result.get('Title', '')
+            authors = result.get('Authors', 'Unknown Authors')
+            year = result.get('Year', '')
             
             # Look for chemical names in the content
             import re
@@ -989,6 +1001,8 @@ class MolecularOptimizationAgent:
                     molecules.append({
                         'name': match,
                         'source': title,
+                        'authors': authors,
+                        'year': year,
                         'content': content[:200] + "..." if len(content) > 200 else content
                     })
         

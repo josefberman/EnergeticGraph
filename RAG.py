@@ -3,6 +3,7 @@ from langchain_experimental.text_splitter import SemanticChunker
 from langchain_community.vectorstores import Chroma
 from langchain_core.tools import tool
 from auxiliary import all_mini_l6_v2_pretrained_embeddings, ChemBERT_ChEMBL_pretrained_embeddings
+import re
 
 
 @tool
@@ -58,9 +59,37 @@ def retrieve_context(query: str) -> list:
         retrieved_chunks = retriever.invoke(query)
         results = []
         for i, chunk in enumerate(retrieved_chunks):
-            results.append({'Content': chunk.page_content, 'Title': chunk.metadata['Title'],
-                            'Authors': chunk.metadata['Authors']})
-            # results.append(chunk.page_content)
+            metadata = getattr(chunk, 'metadata', {}) or {}
+
+            # Title (robust to key casing)
+            title = metadata.get('Title') or metadata.get('title') or 'Unknown Title'
+
+            # Authors may be list or string and key may vary in casing
+            authors_meta = metadata.get('Authors') or metadata.get('authors') or []
+            if isinstance(authors_meta, (list, tuple)):
+                authors_str = ", ".join(map(str, authors_meta))
+            else:
+                authors_str = str(authors_meta) if authors_meta else 'Unknown Authors'
+
+            # Extract a 4-digit year from common metadata fields
+            year = ''
+            for key in [
+                'Year', 'year', 'Published', 'published', 'PublicationDate',
+                'publication_date', 'UpdateDate', 'update_date', 'Created',
+                'created', 'pub_date', 'date'
+            ]:
+                if key in metadata and metadata[key]:
+                    match = re.search(r'(19|20)\d{2}', str(metadata[key]))
+                    if match:
+                        year = match.group(0)
+                        break
+
+            results.append({
+                'Content': chunk.page_content,
+                'Title': title,
+                'Authors': authors_str,
+                'Year': year
+            })
         return results
         
     except Exception as e:
