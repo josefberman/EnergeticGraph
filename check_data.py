@@ -24,7 +24,7 @@ def check_data_structure():
         
         # Check property columns
         property_columns = ['Density', 'Detonation velocity', 'Explosion capacity', 
-                           'Explosion pressure', 'Explosion heat', 'Solid phase formation enthalpy']
+                           'Explosion pressure', 'Explosion heat']
         
         print(f"\nProperty columns:")
         for col in property_columns:

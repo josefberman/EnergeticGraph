@@ -833,7 +833,7 @@ class MolecularOptimizationAgent:
         weights = {}
         
         property_columns = ['Density', 'Detonation velocity', 'Explosion capacity', 
-                           'Explosion pressure', 'Explosion heat', 'Solid phase formation enthalpy']
+                           'Explosion pressure', 'Explosion heat']
         
         for prop in property_columns:
             if prop in df.columns and not pd.isna(row[prop]):

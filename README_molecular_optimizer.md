@@ -50,7 +50,6 @@ The system expects a CSV file with the following columns:
   - `Explosion capacity`
   - `Explosion pressure`
   - `Explosion heat`
-  - `Solid phase formation enthalpy`
 
 **Note**: No starting molecule is required. The system will automatically find a suitable starting molecule using RAG based on the target properties.
 
@@ -59,8 +58,8 @@ The system expects a CSV file with the following columns:
 
 ### Example CSV:
 ```csv
-Density,Detonation velocity,Explosion capacity,Explosion pressure,Explosion heat,Solid phase formation enthalpy,Density_weight,Detonation velocity_weight,Explosion capacity_weight,Explosion pressure_weight,Explosion heat_weight,Solid phase formation enthalpy_weight
-1.8,8000,0.9,250,1200,60,1.0,1.0,1.0,1.0,1.0,1.0
+Density,Detonation velocity,Explosion capacity,Explosion pressure,Explosion heat,Density_weight,Detonation velocity_weight,Explosion capacity_weight,Explosion pressure_weight,Explosion heat_weight
+1.8,8000,0.9,250,1200,1.0,1.0,1.0,1.0,1.0
 ```
 
 ## Usage
@@ -121,7 +120,6 @@ Uses trained ML models to predict:
 - Explosion capacity
 - Explosion pressure
 - Explosion heat
-- Solid phase formation enthalpy
 
 ### 5. Fitness Scoring
 Calculates how close predicted properties are to target values:

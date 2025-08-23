@@ -38,7 +38,6 @@ def extract_from_html(html_path: str):
             explosion_pressure_text = cells[4].get_text(strip=True)
             explosive_heat_text = cells[5].get_text(strip=True)
             explosive_capacity_text = cells[6].get_text(strip=True)
-            solid_phase_formation_enthalpy_text = cells[7].get_text(strip=True)
         except IndexError:
             continue
 
@@ -88,7 +87,6 @@ def extract_from_html(html_path: str):
             "Explosion pressure": explosion_pressure_text,
             "Explosive heat": explosive_heat_text,
             "Explosion capacity": explosive_capacity_text,
-            "Solid phase formation enthalpy": solid_phase_formation_enthalpy_text,
             "SMILES": smiles
         }
         extracted_data.append(row_data)

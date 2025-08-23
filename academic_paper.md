@@ -131,7 +131,6 @@ The system employs machine learning models for predicting six key energetic mate
 3. **Explosion capacity** (dimensionless)
 4. **Explosion pressure** (GPa)
 5. **Explosion heat** (kJ/kg)
-6. **Solid phase formation enthalpy** (kJ/mol)
 
 #### 3.3.1 Model Training
 Models are trained using three algorithms:
@@ -236,7 +235,7 @@ The trained models achieved the following performance metrics:
 | Explosion capacity | 0.79 | 0.08 | 0.06 |
 | Explosion pressure | 0.85 | 25 | 18 |
 | Explosion heat | 0.81 | 120 | 95 |
-| Solid phase formation enthalpy | 0.83 | 8.5 | 6.2 |
+| (removed) |  |  |  |
 
 ### 4.2 Optimization Case Studies
 
@@ -500,7 +499,7 @@ Detailed performance metrics for all six property prediction models:
 | SVR | Explosion capacity | 0.79 | 0.08 | 0.06 | 312 |
 | KernelRidge | Explosion pressure | 0.85 | 25 | 18 | 304 |
 | RandomForest | Explosion heat | 0.81 | 120 | 95 | 310 |
-| SVR | Solid phase formation enthalpy | 0.83 | 8.5 | 6.2 | 308 |
+| SVR | (removed) |  |  |  |  |
 
 ### B.2 Optimization Case Studies
 

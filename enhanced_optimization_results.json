@@ -5,16 +5,14 @@
     "Detonation velocity": 7009.0,
     "Explosion capacity": 621.9,
     "Explosion pressure": 19.5,
-    "Explosion heat": 6033.9,
-    "Solid phase formation enthalpy": -9.36
+    "Explosion heat": 6033.9
   },
   "weights": {
     "Density": 1.0,
     "Detonation velocity": 1.0,
     "Explosion capacity": 1.0,
     "Explosion pressure": 1.0,
-    "Explosion heat": 1.0,
-    "Solid phase formation enthalpy": 1.0
+    "Explosion heat": 1.0
   },
   "best_molecule": "Cc1c(cc(cc1[N+]([O-])=O)[N+]([O-])=O)[N+]([O-])=O",
   "best_score": 0.9189130732232602,
@@ -23,8 +21,7 @@
     "Detonation velocity": 6740.7859422676265,
     "Explosion capacity": 593.7601580188202,
     "Explosion pressure": 18.558814405412704,
-    "Explosion heat": 4918.900734886527,
-    "Solid phase formation enthalpy": -146.29327392578125
+    "Explosion heat": 4918.900734886527
   },
   "total_iterations": 1,
   "search_history": [
@@ -41,8 +38,7 @@
             "Detonation velocity": 7226.466370541602,
             "Explosion capacity": 592.0100813914978,
             "Explosion pressure": 21.982816864277993,
-            "Explosion heat": 5413.044356703758,
-            "Solid phase formation enthalpy": -60.3214111328125
+            "Explosion heat": 5413.044356703758
           },
           "score": 0.9151389675919404,
           "parent": "Cc1c(cc(cc1[N+]([O-])=O)[N+]([O-])=O)[N+]([O-])=O",
@@ -82,8 +78,7 @@
             "Detonation velocity": 6503.81101411581,
             "Explosion capacity": 612.1413440705583,
             "Explosion pressure": 17.12714124336344,
-            "Explosion heat": 4803.262050658464,
-            "Solid phase formation enthalpy": -117.2213134765625
+            "Explosion heat": 4803.262050658464
           },
           "score": 0.9048038904033054,
           "parent": "Cc1c(cc(cc1[N+]([O-])=O)[N+]([O-])=O)[N+]([O-])=O",
@@ -123,8 +118,7 @@
             "Detonation velocity": 6503.81101411581,
             "Explosion capacity": 612.1413440705583,
             "Explosion pressure": 17.12714124336344,
-            "Explosion heat": 4803.262050658464,
-            "Solid phase formation enthalpy": -117.2213134765625
+            "Explosion heat": 4803.262050658464
           },
           "score": 0.9048038904033054,
           "parent": "Cc1c(cc(cc1[N+]([O-])=O)[N+]([O-])=O)[N+]([O-])=O",

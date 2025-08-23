@@ -405,8 +405,8 @@ def convert_name_to_smiles(name: str) -> str:
 @tool
 def predict_properties(smiles: str) -> dict:
     """
-    Predicts the following properties of energetic materials: Density, Solid-phase formation enthalpy,
-    Detonation speed, Explosion capacity, Explosion pressure, Explosive heat.
+    Predicts the following properties of energetic materials: Density, Detonation velocity,
+    Explosion capacity, Explosion pressure, Explosion heat.
     :param smiles: SMILES string representing the molecule to predict.
     :return: Dictionary with predicted values
     """
@@ -425,8 +425,7 @@ def predict_properties(smiles: str) -> dict:
         # Ensure descriptor is 2D for scaler
         descriptor_scaled = scaler.transform(descriptor)
         
-        property_list = ['Density', 'Detonation velocity', 'Explosion capacity', 'Explosion pressure', 'Explosion heat',
-                         'Solid phase formation enthalpy']
+        property_list = ['Density', 'Detonation velocity', 'Explosion capacity', 'Explosion pressure', 'Explosion heat']
         predictions = {}
         
         for key in property_list:
@@ -448,6 +447,5 @@ def predict_properties(smiles: str) -> dict:
             'Detonation velocity': 5000.0,
             'Explosion capacity': 0.5,
             'Explosion pressure': 150.0,
-            'Explosion heat': 800.0,
-            'Solid phase formation enthalpy': 30.0
+            'Explosion heat': 800.0
         }

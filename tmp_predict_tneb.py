@@ -9,8 +9,7 @@ order = [
     'Detonation velocity',
     'Explosion capacity',
     'Explosion pressure',
-    'Explosion heat',
-    'Solid phase formation enthalpy'
+    'Explosion heat'
 ]
 
 # Print as a single CSV line
