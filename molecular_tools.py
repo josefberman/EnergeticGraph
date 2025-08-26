@@ -38,6 +38,15 @@ class MolecularValidator:
             "properties": {}
         }
         
+        # Reject radicals early
+        try:
+            radical_electrons = sum(a.GetNumRadicalElectrons() for a in mol.GetAtoms())
+            if radical_electrons > 0:
+                results["warnings"].append(f"Contains {radical_electrons} radical electrons")
+                results["valid"] = False
+        except Exception:
+            pass
+        
         # Basic molecular properties
         results["properties"]["molecular_weight"] = Descriptors.ExactMolWt(mol)
         results["properties"]["logp"] = Descriptors.MolLogP(mol)
@@ -146,304 +155,530 @@ class MolecularGenerator:
             'pyrazole': 'c1n[nH]cc1',
             'furazan': 'c1n[nH]oc1',
             'oxadiazole': 'c1n[nH]oc1',
-            'dinitro': '[N+](=O)[O-][N+](=O)[O-]',
-            'trinitro': '[N+](=O)[O-][N+](=O)[O-][N+](=O)[O-]',
         }
     
     def generate_modifications(self, smiles: str, max_modifications: int = 10) -> List[Dict[str, Any]]:
         """Generate valid molecular modifications"""
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
-            return []
+            raise ValueError("Invalid SMILES passed to generate_modifications")
         
         modifications = []
         validator = MolecularValidator()
+        seen_smiles: set = set()
         
         # Strategy 1: Add energetic groups to available positions
         for group_name, group_smiles in self.common_substituents.items():
             if len(modifications) >= max_modifications:
                 break
-                
-            try:
-                # Try to add the group to different positions
-                modified_smiles = self._add_substituent(smiles, group_smiles)
-                if modified_smiles and modified_smiles != smiles:
-                    # Validate the modification
-                    validation = validator.validate_molecule(modified_smiles)
-                    if validation["valid"]:
-                        modifications.append({
-                            "smiles": modified_smiles,
-                            "description": f"Added {group_name} group",
-                            "group": group_name,
-                            "validation": validation
-                        })
-            except:
-                continue
+            # Try to add the group to different positions (diversify positions)
+            remaining = max_modifications - len(modifications)
+            for variant_smiles in self._add_substituent_variants(smiles, group_smiles, remaining):
+                if variant_smiles == smiles or variant_smiles in seen_smiles:
+                    continue
+                validation = validator.validate_molecule(variant_smiles)
+                if validation["valid"]:
+                    modifications.append({
+                        "smiles": variant_smiles,
+                        "description": f"Added {group_name} group",
+                        "group": group_name,
+                        "validation": validation
+                    })
+                    seen_smiles.add(variant_smiles)
+                if len(modifications) >= max_modifications:
+                    break
         
         # Strategy 2: Remove existing substituents
         removal_modifications = self._generate_removal_modifications(smiles)
         modifications.extend(removal_modifications[:max_modifications - len(modifications)])
         
-        # Strategy 3: Ring modifications
+        # Strategy 3: Ring modifications (heteroatom substitutions)
         ring_modifications = self._generate_ring_modifications(smiles)
         modifications.extend(ring_modifications[:max_modifications - len(modifications)])
+        
+        # Strategy 4: Ring opening (aromatic and non-aromatic)
+        if len(modifications) < max_modifications:
+            ring_openings = self._generate_ring_openings(smiles)
+            modifications.extend(ring_openings[:max_modifications - len(modifications)])
+        
+        # Strategy 5: Ring closing (form new rings from chains)
+        if len(modifications) < max_modifications:
+            ring_closures = self._generate_ring_closures(smiles)
+            modifications.extend(ring_closures[:max_modifications - len(modifications)])
         
         return modifications
     
     def _add_substituent(self, smiles: str, substituent_smiles: str) -> Optional[str]:
         """Add a substituent to a molecule"""
-        try:
-            mol = Chem.MolFromSmiles(smiles)
-            substituent_mol = Chem.MolFromSmiles(substituent_smiles)
-            
-            if mol is None or substituent_mol is None:
-                return None
-            
-            # Find a suitable position (carbon with hydrogen)
-            for atom in mol.GetAtoms():
-                if atom.GetSymbol() == 'C':
-                    # Check for hydrogen neighbors
-                    for neighbor in atom.GetNeighbors():
-                        if neighbor.GetSymbol() == 'H':
-                            # Create modified molecule
-                            modified_mol = Chem.RWMol(mol)
-                            
-                            # Remove hydrogen
-                            modified_mol.RemoveAtom(neighbor.GetIdx())
-                            
-                            # Add substituent
-                            for i, substituent_atom in enumerate(substituent_mol.GetAtoms()):
-                                new_atom_idx = modified_mol.AddAtom(substituent_atom)
-                                if i == 0:  # First atom connects to carbon
-                                    modified_mol.AddBond(atom.GetIdx(), new_atom_idx, Chem.BondType.SINGLE)
-                            
-                            # Add bonds within substituent
-                            for bond in substituent_mol.GetBonds():
-                                begin_idx = modified_mol.GetNumAtoms() - substituent_mol.GetNumAtoms() + bond.GetBeginAtomIdx()
-                                end_idx = modified_mol.GetNumAtoms() - substituent_mol.GetNumAtoms() + bond.GetEndAtomIdx()
-                                modified_mol.AddBond(begin_idx, end_idx, bond.GetBondType())
-                            
-                            Chem.SanitizeMol(modified_mol)
-                            return Chem.MolToSmiles(modified_mol)
-            
-            return None
-        except:
-            return None
+        mol = Chem.MolFromSmiles(smiles)
+        substituent_mol = Chem.MolFromSmiles(substituent_smiles)
+        if mol is None:
+            raise ValueError("Invalid SMILES passed to _add_substituent")
+        if substituent_mol is None:
+            raise ValueError("Invalid substituent SMILES passed to _add_substituent")
+        
+        # Find a suitable position (carbon with hydrogen)
+        for atom in mol.GetAtoms():
+            if atom.GetSymbol() == 'C':
+                # Check for hydrogen neighbors
+                for neighbor in atom.GetNeighbors():
+                    if neighbor.GetSymbol() == 'H':
+                        # Create modified molecule
+                        modified_mol = Chem.RWMol(mol)
+                        
+                        # Remove hydrogen
+                        modified_mol.RemoveAtom(neighbor.GetIdx())
+                        
+                        # Add substituent
+                        for i, substituent_atom in enumerate(substituent_mol.GetAtoms()):
+                            new_atom_idx = modified_mol.AddAtom(substituent_atom)
+                            if i == 0:  # First atom connects to carbon
+                                modified_mol.AddBond(atom.GetIdx(), new_atom_idx, Chem.BondType.SINGLE)
+                        
+                        # Add bonds within substituent
+                        for bond in substituent_mol.GetBonds():
+                            begin_idx = modified_mol.GetNumAtoms() - substituent_mol.GetNumAtoms() + bond.GetBeginAtomIdx()
+                            end_idx = modified_mol.GetNumAtoms() - substituent_mol.GetNumAtoms() + bond.GetEndAtomIdx()
+                            modified_mol.AddBond(begin_idx, end_idx, bond.GetBondType())
+                        
+                        Chem.SanitizeMol(modified_mol)
+                        return Chem.MolToSmiles(modified_mol)
+        
+        raise RuntimeError("No suitable position found to add substituent")
+
+    def _add_substituent_variants(self, smiles: str, substituent_smiles: str, max_variants: int) -> List[str]:
+        """Generate multiple positional variants by adding a substituent at different positions.
+        Returns up to max_variants unique SMILES strings.
+        """
+        mol = Chem.MolFromSmiles(smiles)
+        substituent_mol = Chem.MolFromSmiles(substituent_smiles)
+        if mol is None:
+            raise ValueError("Invalid SMILES passed to _add_substituent_variants")
+        if substituent_mol is None:
+            # Skip invalid substituent definitions rather than crashing generation
+            return []
+        variants: List[str] = []
+        seen: set = set()
+        for atom in mol.GetAtoms():
+            if atom.GetSymbol() != 'C':
+                continue
+            for neighbor in atom.GetNeighbors():
+                if neighbor.GetSymbol() != 'H':
+                    continue
+                modified_mol = Chem.RWMol(mol)
+                modified_mol.RemoveAtom(neighbor.GetIdx())
+                for i, substituent_atom in enumerate(substituent_mol.GetAtoms()):
+                    new_atom_idx = modified_mol.AddAtom(substituent_atom)
+                    if i == 0:
+                        modified_mol.AddBond(atom.GetIdx(), new_atom_idx, Chem.BondType.SINGLE)
+                for bond in substituent_mol.GetBonds():
+                    begin_idx = modified_mol.GetNumAtoms() - substituent_mol.GetNumAtoms() + bond.GetBeginAtomIdx()
+                    end_idx = modified_mol.GetNumAtoms() - substituent_mol.GetNumAtoms() + bond.GetEndAtomIdx()
+                    modified_mol.AddBond(begin_idx, end_idx, bond.GetBondType())
+                try:
+                    Chem.SanitizeMol(modified_mol)
+                    # Skip radicals
+                    if any(a.GetNumRadicalElectrons() > 0 for a in modified_mol.GetAtoms()):
+                        continue
+                    variant = Chem.MolToSmiles(modified_mol)
+                except Exception:
+                    continue
+                if variant and variant != smiles and variant not in seen:
+                    variants.append(variant)
+                    seen.add(variant)
+                    if len(variants) >= max_variants:
+                        return variants
+        return variants
     
     def _remove_substituent(self, smiles: str, substituent_pattern: str) -> Optional[str]:
-        """Remove a substituent from a molecule"""
-        try:
-            mol = Chem.MolFromSmiles(smiles)
-            if mol is None:
-                return None
+        """Remove a substituent from a molecule. Returns None if no valid sanitized variant found."""
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            raise ValueError("Invalid SMILES passed to _remove_substituent")
+        
+        # Create pattern molecule for matching
+        pattern_mol = Chem.MolFromSmarts(substituent_pattern)
+        if pattern_mol is None:
+            raise ValueError("Invalid SMARTS pattern passed to _remove_substituent")
+        
+        # Find matches of the substituent pattern
+        matches = mol.GetSubstructMatches(pattern_mol)
+        
+        for match in matches:
+            # Create modified molecule
+            modified_mol = Chem.RWMol(mol)
             
-            # Create pattern molecule for matching
-            pattern_mol = Chem.MolFromSmarts(substituent_pattern)
-            if pattern_mol is None:
-                return None
+            # Find the attachment point (atom connected to the rest of the molecule)
+            attachment_atom = None
+            substituent_atoms = set(match)
             
-            # Find matches of the substituent pattern
-            matches = mol.GetSubstructMatches(pattern_mol)
+            for atom_idx in match:
+                atom = mol.GetAtomWithIdx(atom_idx)
+                for neighbor in atom.GetNeighbors():
+                    if neighbor.GetIdx() not in substituent_atoms:
+                        attachment_atom = neighbor.GetIdx()
+                        break
+                if attachment_atom is not None:
+                    break
             
-            for match in matches:
+            if attachment_atom is None:
+                continue
+            
+            # Remove substituent atoms (in reverse order to avoid index issues)
+            atoms_to_remove = sorted(match, reverse=True)
+            for atom_idx in atoms_to_remove:
+                modified_mol.RemoveAtom(atom_idx)
+            
+            # Add hydrogen to the attachment point if needed
+            attachment_atom_new = modified_mol.GetAtomWithIdx(attachment_atom)
+            if attachment_atom_new.GetNumImplicitHs() == 0 and attachment_atom_new.GetNumExplicitHs() == 0:
+                # Add explicit hydrogen
+                h_atom = modified_mol.AddAtom(Chem.Atom('H'))
+                modified_mol.AddBond(attachment_atom, h_atom, Chem.BondType.SINGLE)
+            
+            # Sanitize robustly; handle aromatic issues
+            try:
+                Chem.SanitizeMol(modified_mol)
+            except Exception:
                 try:
-                    # Create modified molecule
-                    modified_mol = Chem.RWMol(mol)
-                    
-                    # Find the attachment point (atom connected to the rest of the molecule)
-                    attachment_atom = None
-                    substituent_atoms = set(match)
-                    
-                    for atom_idx in match:
-                        atom = mol.GetAtomWithIdx(atom_idx)
-                        for neighbor in atom.GetNeighbors():
-                            if neighbor.GetIdx() not in substituent_atoms:
-                                attachment_atom = neighbor.GetIdx()
-                                break
-                        if attachment_atom is not None:
-                            break
-                    
-                    if attachment_atom is None:
-                        continue
-                    
-                    # Remove substituent atoms (in reverse order to avoid index issues)
-                    atoms_to_remove = sorted(match, reverse=True)
-                    for atom_idx in atoms_to_remove:
-                        modified_mol.RemoveAtom(atom_idx)
-                    
-                    # Add hydrogen to the attachment point if needed
-                    attachment_atom_new = modified_mol.GetAtomWithIdx(attachment_atom)
-                    if attachment_atom_new.GetNumImplicitHs() == 0 and attachment_atom_new.GetNumExplicitHs() == 0:
-                        # Add explicit hydrogen
-                        h_atom = modified_mol.AddAtom(Chem.Atom('H'))
-                        modified_mol.AddBond(attachment_atom, h_atom, Chem.BondType.SINGLE)
-                    
-                    Chem.SanitizeMol(modified_mol)
-                    modified_smiles = Chem.MolToSmiles(modified_mol)
-                    
-                    if modified_smiles and modified_smiles != smiles:
-                        return modified_smiles
-                        
-                except:
+                    from rdkit.Chem import rdmolops
+                    rdmolops.Kekulize(modified_mol, clearAromaticFlags=True)
+                    # Sanitize all except kekulization (already done/cleared)
+                    Chem.SanitizeMol(
+                        modified_mol,
+                        sanitizeOps=Chem.SanitizeFlags.SANITIZE_ALL ^ Chem.SanitizeFlags.SANITIZE_KEKULIZE,
+                    )
+                except Exception:
+                    # Skip this match if cannot sanitize
                     continue
             
-            return None
-        except:
-            return None
+            # Skip radicals
+            if any(a.GetNumRadicalElectrons() > 0 for a in modified_mol.GetAtoms()):
+                continue
+            
+            try:
+                modified_smiles = Chem.MolToSmiles(modified_mol)
+            except Exception:
+                # As a fallback for SMILES writing, try kekule form
+                try:
+                    modified_smiles = Chem.MolToSmiles(modified_mol, kekuleSmiles=True)
+                except Exception:
+                    continue
+            
+            if modified_smiles and modified_smiles != smiles:
+                return modified_smiles
+        
+        # None found
+        return None
+    
+    def _generate_removal_modifications(self, smiles: str) -> List[Dict[str, Any]]:
+        """Generate modifications by removing existing substituents"""
+        modifications: List[Dict[str, Any]] = []
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            raise ValueError("Invalid SMILES passed to _generate_removal_modifications")
+        
+        validator = MolecularValidator()
+        
+        # Define patterns for removable substituents
+        removable_patterns = {
+            'nitro_group': '[#6][#7+](=[#8])[#8-]',
+            'azido_group': '[#7-]=[#7+]=[#7]',
+            'nitroso_group': '[#7]=[#8]',
+            'nitramine_group': '[#7][#7+](=[#8])[#8-]',
+            'cyano_group': '[#6]#[#7]',
+            'hydroxyl_group': '[#6][#8][#1]',
+            'amino_group': '[#6][#7]([#1])[#1]',
+            'fluoro_group': '[#6][#9]',
+            'chloro_group': '[#6][#17]',
+            'methyl_group': '[#6][#6]([#1])([#1])[#1]',
+            'ethyl_group': '[#6][#6][#6]([#1])([#1])[#1]',
+            'carboxyl_group': '[#6](=[#8])[#8][#1]',
+            'ester_group': '[#6](=[#8])[#8][#6]',
+            'ether_group': '[#6][#8][#6]',
+            'thiol_group': '[#6][#16][#1]',
+            'sulfone_group': '[#6][#16](=[#8])(=[#8])[#6]',
+            'peroxide_group': '[#8][#8]',
+            'fulminate_group': '[#6-]#[#7+][#8]',
+        }
+        
+        for group_name, pattern in removable_patterns.items():
+            modified_smiles = self._remove_substituent(smiles, pattern)
+            if modified_smiles and modified_smiles != smiles:
+                validation = validator.validate_molecule(modified_smiles)
+                if validation.get("valid", False):
+                    modifications.append({
+                        "smiles": modified_smiles,
+                        "description": f"Removed {group_name}",
+                        "group": f"removed_{group_name}",
+                        "validation": validation
+                    })
+        
+        # Also try removing individual atoms that might be problematic
+        individual_atom_removals = self._generate_individual_atom_removals(smiles)
+        modifications.extend(individual_atom_removals)
+        
+        return modifications
+    
+    def _generate_individual_atom_removals(self, smiles: str) -> List[Dict[str, Any]]:
+        """Generate modifications by removing individual terminal atoms"""
+        modifications: List[Dict[str, Any]] = []
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            raise ValueError("Invalid SMILES passed to _generate_individual_atom_removals")
+        
+        validator = MolecularValidator()
+        
+        for atom in mol.GetAtoms():
+            if atom.GetDegree() == 1:  # Terminal atom
+                modified_mol = Chem.RWMol(mol)
+                atom_idx = atom.GetIdx()
+                neighbor = atom.GetNeighbors()[0]
+                neighbor_idx = neighbor.GetIdx()
+                
+                # Remove the terminal atom
+                modified_mol.RemoveAtom(atom_idx)
+                
+                # Add hydrogen to the neighbor if needed
+                neighbor_new = modified_mol.GetAtomWithIdx(neighbor_idx)
+                if neighbor_new.GetNumImplicitHs() == 0 and neighbor_new.GetNumExplicitHs() == 0:
+                    h_atom = modified_mol.AddAtom(Chem.Atom('H'))
+                    modified_mol.AddBond(neighbor_idx, h_atom, Chem.BondType.SINGLE)
+                
+                # Robust sanitization with kekulize fallback
+                try:
+                    Chem.SanitizeMol(modified_mol)
+                except Exception:
+                    try:
+                        from rdkit.Chem import rdmolops
+                        rdmolops.Kekulize(modified_mol, clearAromaticFlags=True)
+                        Chem.SanitizeMol(
+                            modified_mol,
+                            sanitizeOps=Chem.SanitizeFlags.SANITIZE_ALL ^ Chem.SanitizeFlags.SANITIZE_KEKULIZE,
+                        )
+                    except Exception:
+                        continue
+                
+                # Skip radicals
+                if any(a.GetNumRadicalElectrons() > 0 for a in modified_mol.GetAtoms()):
+                    continue
+                
+                try:
+                    modified_smiles = Chem.MolToSmiles(modified_mol)
+                except Exception:
+                    try:
+                        modified_smiles = Chem.MolToSmiles(modified_mol, kekuleSmiles=True)
+                    except Exception:
+                        continue
+                
+                if modified_smiles and modified_smiles != smiles:
+                    validation = validator.validate_molecule(modified_smiles)
+                    if validation.get("valid", False):
+                        atom_symbol = atom.GetSymbol()
+                        modifications.append({
+                            "smiles": modified_smiles,
+                            "description": f"Removed terminal {atom_symbol} atom",
+                            "group": f"removed_{atom_symbol}",
+                            "validation": validation
+                        })
+        
+        return modifications
     
     def _generate_ring_modifications(self, smiles: str) -> List[Dict[str, Any]]:
         """Generate ring-based modifications"""
         modifications = []
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            raise ValueError("Invalid SMILES passed to _generate_ring_modifications")
         
-        try:
-            mol = Chem.MolFromSmiles(smiles)
-            if mol is None:
-                return modifications
-            
-            # Find aromatic rings
-            aromatic_rings = mol.GetSubstructMatches(Chem.MolFromSmarts('a'))
-            
-            for ring_match in aromatic_rings:
-                # Try to add nitrogen atoms to create energetic heterocycles
-                for atom_idx in ring_match:
-                    atom = mol.GetAtomWithIdx(atom_idx)
-                    if atom.GetSymbol() == 'C':
-                        # Try replacing carbon with nitrogen
-                        modified_mol = Chem.RWMol(mol)
-                        modified_mol.GetAtomWithIdx(atom_idx).SetAtomicNum(7)
-                        
+        # Find aromatic rings
+        aromatic_rings = mol.GetSubstructMatches(Chem.MolFromSmarts('a'))
+        
+        for ring_match in aromatic_rings:
+            # Try to add nitrogen atoms to create energetic heterocycles
+            for atom_idx in ring_match:
+                atom = mol.GetAtomWithIdx(atom_idx)
+                if atom.GetSymbol() == 'C':
+                    # Try replacing carbon with nitrogen
+                    modified_mol = Chem.RWMol(mol)
+                    modified_mol.GetAtomWithIdx(atom_idx).SetAtomicNum(7)
+                    
+                    # Robust sanitization to avoid kekulization crashes
+                    try:
+                        Chem.SanitizeMol(modified_mol)
+                    except Exception:
                         try:
-                            Chem.SanitizeMol(modified_mol)
-                            modified_smiles = Chem.MolToSmiles(modified_mol)
-                            if modified_smiles != smiles:
-                                validator = MolecularValidator()
-                                validation = validator.validate_molecule(modified_smiles)
-                                if validation["valid"]:
-                                    modifications.append({
-                                        "smiles": modified_smiles,
-                                        "description": "Replaced carbon with nitrogen in aromatic ring",
-                                        "group": "nitrogen_substitution",
-                                        "validation": validation
-                                    })
-                        except:
+                            from rdkit.Chem import rdmolops
+                            rdmolops.Kekulize(modified_mol, clearAromaticFlags=True)
+                            Chem.SanitizeMol(
+                                modified_mol,
+                                sanitizeOps=Chem.SanitizeFlags.SANITIZE_ALL ^ Chem.SanitizeFlags.SANITIZE_KEKULIZE,
+                            )
+                        except Exception:
+                            # Skip this substitution if sanitization fails
                             continue
-            
-            return modifications
-        except:
-            return modifications
-    
-    def _generate_removal_modifications(self, smiles: str) -> List[Dict[str, Any]]:
-        """Generate modifications by removing existing substituents"""
-        modifications = []
-        
-        try:
-            mol = Chem.MolFromSmiles(smiles)
-            if mol is None:
-                return modifications
-            
-            validator = MolecularValidator()
-            
-            # Define patterns for removable substituents
-            removable_patterns = {
-                'nitro_group': '[#6][#7+](=[#8])[#8-]',
-                'azido_group': '[#7-]=[#7+]=[#7]',
-                'nitroso_group': '[#7]=[#8]',
-                'nitramine_group': '[#7][#7+](=[#8])[#8-]',
-                'cyano_group': '[#6]#[#7]',
-                'hydroxyl_group': '[#6][#8][#1]',
-                'amino_group': '[#6][#7]([#1])[#1]',
-                'fluoro_group': '[#6][#9]',
-                'chloro_group': '[#6][#17]',
-                'methyl_group': '[#6][#6]([#1])([#1])[#1]',
-                'ethyl_group': '[#6][#6][#6]([#1])([#1])[#1]',
-                'carboxyl_group': '[#6](=[#8])[#8][#1]',
-                'ester_group': '[#6](=[#8])[#8][#6]',
-                'ether_group': '[#6][#8][#6]',
-                'thiol_group': '[#6][#16][#1]',
-                'sulfone_group': '[#6][#16](=[#8])(=[#8])[#6]',
-                'peroxide_group': '[#8][#8]',
-                'fulminate_group': '[#6-]#[#7+][#8]',
-            }
-            
-            for group_name, pattern in removable_patterns.items():
-                try:
-                    # Try to remove the substituent
-                    modified_smiles = self._remove_substituent(smiles, pattern)
-                    if modified_smiles and modified_smiles != smiles:
-                        # Validate the modification
+                    
+                    # Skip radicals
+                    if any(a.GetNumRadicalElectrons() > 0 for a in modified_mol.GetAtoms()):
+                        continue
+                    
+                    try:
+                        modified_smiles = Chem.MolToSmiles(modified_mol)
+                    except Exception:
+                        try:
+                            modified_smiles = Chem.MolToSmiles(modified_mol, kekuleSmiles=True)
+                        except Exception:
+                            continue
+                    if modified_smiles != smiles:
+                        validator = MolecularValidator()
                         validation = validator.validate_molecule(modified_smiles)
                         if validation["valid"]:
                             modifications.append({
                                 "smiles": modified_smiles,
-                                "description": f"Removed {group_name}",
-                                "group": f"removed_{group_name}",
+                                "description": "Replaced carbon with nitrogen in aromatic ring",
+                                "group": "nitrogen_substitution",
                                 "validation": validation
                             })
-                except:
-                    continue
-            
-            # Also try removing individual atoms that might be problematic
-            individual_atom_removals = self._generate_individual_atom_removals(smiles)
-            modifications.extend(individual_atom_removals)
-            
-            return modifications
-        except:
-            return modifications
-    
-    def _generate_individual_atom_removals(self, smiles: str) -> List[Dict[str, Any]]:
-        """Generate modifications by removing individual atoms"""
-        modifications = []
         
-        try:
-            mol = Chem.MolFromSmiles(smiles)
-            if mol is None:
-                return modifications
-            
-            validator = MolecularValidator()
-            
-            # Try removing terminal atoms (atoms with only one neighbor)
-            for atom in mol.GetAtoms():
-                if atom.GetDegree() == 1:  # Terminal atom
+        return modifications
+    
+    def _generate_ring_openings(self, smiles: str) -> List[Dict[str, Any]]:
+        """Open ring bonds (aromatic or aliphatic) to form chains."""
+        modifications: List[Dict[str, Any]] = []
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return modifications
+        validator = MolecularValidator()
+        
+        for bond in mol.GetBonds():
+            if not bond.IsInRing():
+                continue
+            begin_idx = bond.GetBeginAtomIdx()
+            end_idx = bond.GetEndAtomIdx()
+            modified_mol = Chem.RWMol(mol)
+            try:
+                modified_mol.RemoveBond(begin_idx, end_idx)
+            except Exception:
+                continue
+            # Try sanitize directly first
+            ok = True
+            try:
+                Chem.SanitizeMol(modified_mol)
+            except Exception:
+                ok = False
+            if not ok:
+                # Try capping both ends with hydrogens
+                try:
+                    h1 = modified_mol.AddAtom(Chem.Atom('H'))
+                    modified_mol.AddBond(begin_idx, h1, Chem.BondType.SINGLE)
+                    h2 = modified_mol.AddAtom(Chem.Atom('H'))
+                    modified_mol.AddBond(end_idx, h2, Chem.BondType.SINGLE)
+                    Chem.SanitizeMol(modified_mol)
+                    ok = True
+                except Exception:
+                    # Try kekulize fallback
                     try:
-                        # Create modified molecule
-                        modified_mol = Chem.RWMol(mol)
-                        
-                        # Find the atom to remove
-                        atom_idx = atom.GetIdx()
-                        
-                        # Get the neighbor (attachment point)
-                        neighbor = atom.GetNeighbors()[0]
-                        neighbor_idx = neighbor.GetIdx()
-                        
-                        # Remove the terminal atom
-                        modified_mol.RemoveAtom(atom_idx)
-                        
-                        # Add hydrogen to the neighbor if needed
-                        neighbor_new = modified_mol.GetAtomWithIdx(neighbor_idx)
-                        if neighbor_new.GetNumImplicitHs() == 0 and neighbor_new.GetNumExplicitHs() == 0:
-                            h_atom = modified_mol.AddAtom(Chem.Atom('H'))
-                            modified_mol.AddBond(neighbor_idx, h_atom, Chem.BondType.SINGLE)
-                        
-                        Chem.SanitizeMol(modified_mol)
-                        modified_smiles = Chem.MolToSmiles(modified_mol)
-                        
-                        if modified_smiles and modified_smiles != smiles:
-                            # Validate the modification
-                            validation = validator.validate_molecule(modified_smiles)
-                            if validation["valid"]:
-                                atom_symbol = atom.GetSymbol()
-                                modifications.append({
-                                    "smiles": modified_smiles,
-                                    "description": f"Removed terminal {atom_symbol} atom",
-                                    "group": f"removed_{atom_symbol}",
-                                    "validation": validation
-                                })
-                    except:
+                        from rdkit.Chem import rdmolops
+                        rdmolops.Kekulize(modified_mol, clearAromaticFlags=True)
+                        Chem.SanitizeMol(
+                            modified_mol,
+                            sanitizeOps=Chem.SanitizeFlags.SANITIZE_ALL ^ Chem.SanitizeFlags.SANITIZE_KEKULIZE,
+                        )
+                        ok = True
+                    except Exception:
                         continue
-            
+            # Skip radicals
+            if any(a.GetNumRadicalElectrons() > 0 for a in modified_mol.GetAtoms()):
+                continue
+            try:
+                modified_smiles = Chem.MolToSmiles(modified_mol)
+            except Exception:
+                try:
+                    modified_smiles = Chem.MolToSmiles(modified_mol, kekuleSmiles=True)
+                except Exception:
+                    continue
+            if modified_smiles and modified_smiles != smiles:
+                validation = validator.validate_molecule(modified_smiles)
+                if validation.get("valid", False):
+                    modifications.append({
+                        "smiles": modified_smiles,
+                        "description": "Opened ring bond to form chain",
+                        "group": "ring_opening",
+                        "validation": validation
+                    })
+        return modifications
+    
+    def _generate_ring_closures(self, smiles: str) -> List[Dict[str, Any]]:
+        """Form new rings by adding a bond between non-bonded atoms along short paths."""
+        modifications: List[Dict[str, Any]] = []
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
             return modifications
-        except:
-            return modifications
+        validator = MolecularValidator()
+        num_atoms = mol.GetNumAtoms()
+        
+        # Consider pairs with graph distance between 3 and 6 (tri- to 7-member ring)
+        for i in range(num_atoms):
+            ai = mol.GetAtomWithIdx(i)
+            # Prefer C and N atoms for ring closures
+            if ai.GetSymbol() not in ('C', 'N', 'O'):
+                continue
+            for j in range(i + 1, num_atoms):
+                if mol.GetBondBetweenAtoms(i, j) is not None:
+                    continue
+                aj = mol.GetAtomWithIdx(j)
+                if aj.GetSymbol() not in ('C', 'N', 'O'):
+                    continue
+                try:
+                    from rdkit.Chem import rdmolops
+                    path = rdmolops.GetShortestPath(mol, i, j)
+                except Exception:
+                    continue
+                if not path:
+                    continue
+                distance = len(path) - 1
+                if distance < 3 or distance > 6:
+                    continue
+                # Try adding a single bond
+                modified_mol = Chem.RWMol(mol)
+                try:
+                    modified_mol.AddBond(i, j, Chem.BondType.SINGLE)
+                except Exception:
+                    continue
+                # Sanitize
+                try:
+                    Chem.SanitizeMol(modified_mol)
+                except Exception:
+                    # Try kekulize fallback
+                    try:
+                        from rdkit.Chem import rdmolops
+                        rdmolops.Kekulize(modified_mol, clearAromaticFlags=True)
+                        Chem.SanitizeMol(
+                            modified_mol,
+                            sanitizeOps=Chem.SanitizeFlags.SANITIZE_ALL ^ Chem.SanitizeFlags.SANITIZE_KEKULIZE,
+                        )
+                    except Exception:
+                        continue
+                # Skip radicals
+                if any(a.GetNumRadicalElectrons() > 0 for a in modified_mol.GetAtoms()):
+                    continue
+                try:
+                    modified_smiles = Chem.MolToSmiles(modified_mol)
+                except Exception:
+                    try:
+                        modified_smiles = Chem.MolToSmiles(modified_mol, kekuleSmiles=True)
+                    except Exception:
+                        continue
+                if modified_smiles and modified_smiles != smiles:
+                    validation = validator.validate_molecule(modified_smiles)
+                    if validation.get("valid", False):
+                        modifications.append({
+                            "smiles": modified_smiles,
+                            "description": "Closed chain to form ring",
+                            "group": "ring_closure",
+                            "validation": validation
+                        })
+        return modifications
 
 @tool
 def validate_molecule_structure(smiles: str) -> Dict[str, Any]:

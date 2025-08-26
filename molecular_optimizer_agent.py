@@ -3,6 +3,7 @@ import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning, module="importlib._bootstrap")
 
 from typing import List, Dict, Any, Optional
+import argparse
 import pandas as pd
 from rdkit import Chem
 from rdkit import RDLogger
@@ -51,10 +52,11 @@ class OptimizationState:
 class MolecularOptimizationAgent:
     """Enhanced molecular optimization agent using LangGraph"""
     
-    def __init__(self, beam_width: int = 5, max_iterations: int = 10, convergence_threshold: float = 0.01):
+    def __init__(self, beam_width: int = 5, max_iterations: int = 10, convergence_threshold: float = 0.01, use_rag: bool = True):
         self.beam_width = beam_width
         self.max_iterations = max_iterations
         self.convergence_threshold = convergence_threshold
+        self.use_rag = use_rag
         
         # Initialize the LLM with all available tools
         self.model = ChatOpenAI(model='gpt-4o', temperature=0).bind_tools([
@@ -103,26 +105,19 @@ class MolecularOptimizationAgent:
     
     def calculate_fitness_score(self, properties: Dict[str, float], target_properties: Dict[str, float], 
                                weights: Dict[str, float]) -> float:
-        """Calculate fitness score based on how close properties are to targets"""
-        score = 0.0
+        """Calculate weighted mean squared error (lower is better)."""
+        weighted_sum = 0.0
         total_weight = 0.0
         
         for prop_name, target_value in target_properties.items():
             if prop_name in properties and prop_name in weights:
                 current_value = properties[prop_name]
-                weight = weights[prop_name]
-                
-                # Normalize the difference (assuming positive values)
-                if target_value > 0:
-                    normalized_diff = abs(current_value - target_value) / target_value
-                    score += weight * (1.0 - normalized_diff)
-                    total_weight += weight
+                weight = float(weights[prop_name])
+                diff = float(current_value) - float(target_value)
+                weighted_sum += weight * (diff * diff)
+                total_weight += weight
         
-        # Normalize by total weight
-        if total_weight > 0:
-            score = score / total_weight
-        
-        return score
+        return (weighted_sum / total_weight) if total_weight > 0 else weighted_sum
     
     def run_beam_search_optimization(self, starting_molecule: str, target_properties: Dict[str, float], 
                                    weights: Dict[str, float], verbose: bool = True) -> Dict[str, Any]:
@@ -153,6 +148,7 @@ class MolecularOptimizationAgent:
             print(f"Weights: {weights}")
             print(f"Beam width: {self.beam_width}")
             print(f"Max iterations: {self.max_iterations}")
+            print(f"RAG enabled: {self.use_rag}")
         
         # Get initial molecule properties
         initial_properties = predict_properties.invoke(starting_molecule)
@@ -163,8 +159,10 @@ class MolecularOptimizationAgent:
             print(f"\nInitial molecule score: {initial_score:.4f}")
             print(f"Initial properties: {initial_properties}")
         
-        # Initialize beam with starting molecule
+        # Initialize beam with starting molecule and assign ordinal ID
+        next_id = 1
         beam = [{
+            'id': next_id,
             'smiles': starting_molecule,
             'properties': initial_properties,
             'score': initial_score,
@@ -172,9 +170,11 @@ class MolecularOptimizationAgent:
             'modification': 'Initial molecule',
             'iteration': 0
         }]
+        next_id += 1
         
         visited_smiles = {starting_molecule}
         previous_best_score = state.best_score
+        no_improvement_iterations = 0
         
         # Main optimization loop
         for iteration in range(self.max_iterations):
@@ -186,66 +186,129 @@ class MolecularOptimizationAgent:
                 print(f"{'='*40}")
                 print(f"Current beam size: {len(beam)}")
             
-            # Generate candidates from current beam
+            # Generate candidates from current beam as a tree: each parent yields exactly beam_width children
             all_candidates = []
             
             for candidate in beam:
                 if verbose:
-                    print(f"\n  Modifying: {candidate['smiles'][:50]}... (score: {candidate['score']:.4f})")
+                    print(f"\n  Modifying [ID {candidate.get('id','?')}]: {candidate['smiles']} (score: {candidate['score']:.4f})")
                 
                 # Use LangGraph and RAG to generate modifications
                 modifications = self._get_modifications_with_agent(candidate['smiles'], target_properties, candidate['score'], verbose)
                 
+                parent_candidates = []
                 for modification in modifications:
                     modified_smiles = modification.get('smiles')
                     if not modified_smiles or modified_smiles in visited_smiles:
                         continue
-                    
-                    try:
-                        # Validate the modification
-                        validation = validate_molecule_structure.invoke(modified_smiles)
-                        if not validation.get('valid', False):
-                            if verbose:
-                                print(f"    -> Invalid modification: {validation.get('error', 'Unknown error')}")
+                    # Validate and score
+                    validation = validate_molecule_structure.invoke(modified_smiles)
+                    if not validation.get('valid', False):
+                        if verbose:
+                            print(f"    -> Invalid modification: {validation.get('error', 'Unknown error')}")
+                        continue
+                    properties = predict_properties.invoke(modified_smiles)
+                    score = self.calculate_fitness_score(properties, target_properties, weights)
+                    parent_candidates.append({
+                        'smiles': modified_smiles,
+                        'properties': properties,
+                        'score': score,
+                        'parent': candidate['smiles'],
+                        'modification': modification.get('description', 'Unknown modification'),
+                        'iteration': iteration + 1,
+                        'validation': validation
+                    })
+                
+                # Exhaustively top-up candidates for this parent to reach beam_width
+                if len(parent_candidates) < self.beam_width:
+                    needed = self.beam_width - len(parent_candidates)
+                    extra_mods = generate_molecular_modifications.invoke(candidate['smiles'], max_modifications=max(self.beam_width * 10, needed))
+                    for mod in extra_mods:
+                        if len(parent_candidates) >= self.beam_width:
+                            break
+                        mod_smiles = mod.get('modified_smiles') or mod.get('smiles')
+                        if not mod_smiles or mod_smiles in visited_smiles:
                             continue
-                        
-                        # Predict properties
-                        properties = predict_properties.invoke(modified_smiles)
+                        validation = validate_molecule_structure.invoke(mod_smiles)
+                        if not validation.get('valid', False):
+                            continue
+                        properties = predict_properties.invoke(mod_smiles)
                         score = self.calculate_fitness_score(properties, target_properties, weights)
-                        
-                        new_candidate = {
-                            'smiles': modified_smiles,
+                        # Deduplicate within parent_candidates
+                        if any(pc['smiles'] == mod_smiles for pc in parent_candidates):
+                            continue
+                        parent_candidates.append({
+                            'smiles': mod_smiles,
                             'properties': properties,
                             'score': score,
                             'parent': candidate['smiles'],
-                            'modification': modification.get('description', 'Unknown modification'),
+                            'modification': mod.get('description', 'Generated modification'),
+                            'iteration': iteration + 1,
+                            'validation': validation
+                        })
+                # Select up to beam_width (minimize MSE); don't fail if fewer
+                parent_candidates.sort(key=lambda x: x['score'])
+                selected_children = parent_candidates[:min(self.beam_width, len(parent_candidates))]
+                for child in selected_children:
+                    child['id'] = next_id
+                    next_id += 1
+                    all_candidates.append(child)
+                    visited_smiles.add(child['smiles'])
+                    if verbose:
+                        print(f"    -> SMILES: {child['smiles']} | modification: {child['modification']} | score: {child['score']:.4f}")
+                    # Update best (minimize)
+                    if child['score'] < state.best_score:
+                        state.best_score = child['score']
+                        state.best_molecule = child['smiles']
+                        if verbose:
+                            print(f"    *** NEW BEST (MSE): {child['score']:.4f} ***")
+            
+            # Backfill across parents to reach at least 3 total candidates, if possible
+            if len(all_candidates) < 3:
+                needed_total = 3 - len(all_candidates)
+                parents_sorted = sorted(beam, key=lambda x: x['score'])
+                existing_smiles = {c['smiles'] for c in all_candidates} | visited_smiles
+                for parent in parents_sorted:
+                    if needed_total <= 0:
+                        break
+                    try:
+                        extra_mods = generate_molecular_modifications.invoke(parent['smiles'], max_modifications=max(self.beam_width * 20, needed_total))
+                    except Exception:
+                        extra_mods = []
+                    for mod in extra_mods:
+                        if needed_total <= 0:
+                            break
+                        mod_smiles = mod.get('modified_smiles') or mod.get('smiles')
+                        if not mod_smiles or mod_smiles in existing_smiles:
+                            continue
+                        validation = validate_molecule_structure.invoke(mod_smiles)
+                        if not validation.get('valid', False):
+                            continue
+                        properties = predict_properties.invoke(mod_smiles)
+                        score = self.calculate_fitness_score(properties, target_properties, weights)
+                        child = {
+                            'smiles': mod_smiles,
+                            'properties': properties,
+                            'score': score,
+                            'parent': parent['smiles'],
+                            'modification': mod.get('description', 'Generated modification'),
                             'iteration': iteration + 1,
                             'validation': validation
                         }
-                        
-                        all_candidates.append(new_candidate)
-                        visited_smiles.add(modified_smiles)
-                        
+                        child['id'] = next_id
+                        next_id += 1
+                        all_candidates.append(child)
+                        existing_smiles.add(mod_smiles)
+                        visited_smiles.add(mod_smiles)
+                        needed_total -= 1
                         if verbose:
-                            print(
-                                f"    -> SMILES: {modified_smiles} | modification: {modification.get('description', 'Unknown modification')} | score: {score:.4f}"
-                            )
-                        
-                        # Update best molecule if better
-                        if score > state.best_score:
-                            state.best_score = score
-                            state.best_molecule = modified_smiles
-                            if verbose:
-                                print(f"    *** NEW BEST: {score:.4f} ***")
-                        
-                    except Exception as e:
-                        if verbose:
-                            print(f"    -> Error: {str(e)}")
-                        continue
+                            print(f"    -> SMILES: {child['smiles']} | modification: {child['modification']} | score: {child['score']:.4f}")
             
-            # Select top candidates for next beam
-            all_candidates.sort(key=lambda x: x['score'], reverse=True)
-            beam = all_candidates[:self.beam_width]
+            # Select top 3 candidates for next beam (minimize MSE)
+            all_candidates.sort(key=lambda x: x['score'])
+            beam = all_candidates[:3]
+            if verbose and len(beam) > 0:
+                print(f"  Progressing to next iteration with IDs: {[c.get('id','?') for c in beam]}")
             
             # Store search history
             state.search_history.append({
@@ -257,23 +320,24 @@ class MolecularOptimizationAgent:
             })
             
             if verbose:
-                print(f"\nBest score in iteration {iteration + 1}: {beam[0]['score'] if beam else 'N/A'}")
-                print(f"Overall best score: {state.best_score:.4f}")
+                print(f"\nBest score (MSE) in iteration {iteration + 1}: {beam[0]['score'] if beam else 'N/A'}")
+                print(f"Overall best score (MSE): {state.best_score:.4f}")
             
-            # Check for convergence
+            # Check for convergence (minimization): stop after 3 consecutive iterations with no improvement
             if len(beam) > 0:
-                score_improvement = state.best_score - previous_best_score
-                if score_improvement < self.convergence_threshold:
-                    if verbose:
-                        print(f"\nConvergence reached (improvement {score_improvement:.4f} < {self.convergence_threshold})")
-                    break
-                previous_best_score = state.best_score
+                if state.best_score < previous_best_score:
+                    no_improvement_iterations = 0
+                    previous_best_score = state.best_score
+                else:
+                    no_improvement_iterations += 1
+                    if no_improvement_iterations >= 3:
+                        if verbose:
+                            print(f"\nConvergence reached: no improvement in {no_improvement_iterations} consecutive iterations")
+                        break
             
             # Early stopping if no valid modifications
             if not beam:
-                if verbose:
-                    print("\nNo valid modifications found. Stopping.")
-                break
+                raise RuntimeError("No valid modifications found to proceed to next iteration")
         
         # Prepare final results
         results = {
@@ -292,9 +356,12 @@ class MolecularOptimizationAgent:
     
     def _get_modifications_with_agent(self, smiles: str, target_properties: Dict[str, float], current_score: float, verbose: bool = True) -> List[Dict[str, Any]]:
         """Use the LangGraph agent and RAG to generate molecular modifications"""
-        
+        # If RAG is disabled, use tool-based generator directly
+        if not self.use_rag:
+            return generate_molecular_modifications.invoke(smiles, max_modifications=10)
+
         if verbose:
-            print(f"    Generating modifications for: {smiles[:30]}...")
+            print(f"    Generating modifications for: {smiles}")
         
         # First, try to find modifications using RAG
         rag_modifications = self._find_modifications_with_rag(smiles, target_properties, current_score)
@@ -754,8 +821,7 @@ class MolecularOptimizationAgent:
             try:
                 states = result_queue.get(timeout=30)  # 30 second timeout
             except queue.Empty:
-                # Timed out – use fallback tool-based generator
-                return generate_molecular_modifications.invoke(smiles, max_modifications=5)
+                raise TimeoutError("Agent timed out while generating modifications")
             
             # Check for exceptions
             try:
@@ -802,19 +868,17 @@ class MolecularOptimizationAgent:
                     modifications.append({
                         'smiles': cand,
                         'modified_smiles': cand,
-                        'description': f'Agent-generated modification: {cand[:30]}...',
+                        'description': f'Agent-generated modification: {cand}',
                         'validation': validation
                     })
 
             if not modifications:
-                return generate_molecular_modifications.invoke(smiles, max_modifications=5)
+                raise RuntimeError("Agent did not generate any modifications")
 
             return modifications
             
         except Exception as e:
-            # Error – use fallback tool-based generator
-            # Fallback to direct tool usage
-            return generate_molecular_modifications.invoke(smiles, max_modifications=5)
+            raise RuntimeError(f"Error generating modifications with agent: {e}")
     
     def process_csv_input(self, csv_file_path: str, verbose: bool = True) -> Dict[str, Any]:
         """Process CSV input and run optimization without starting molecule"""
@@ -845,10 +909,14 @@ class MolecularOptimizationAgent:
         if not target_properties:
             return {"error": "No target properties found in CSV"}
         
-        # Find starting molecule using RAG
-        starting_molecule = self._find_starting_molecule_with_rag(target_properties, verbose)
-        if not starting_molecule:
-            return {"error": "Could not find suitable starting molecule using RAG"}
+        # Determine starting molecule based on RAG flag
+        if self.use_rag:
+            starting_molecule = self._find_starting_molecule_with_rag(target_properties, verbose)
+            if not starting_molecule:
+                return {"error": "Could not find suitable starting molecule using RAG"}
+        else:
+            # RAG disabled: use TNT as default starting molecule
+            starting_molecule = 'Cc1c(cc(cc1[N+](=O)[O-])[N+](=O)[O-])[N+](=O)[O-]'
         
         # Run optimization
         results = self.run_beam_search_optimization(starting_molecule, target_properties, weights, verbose)
@@ -1052,14 +1120,21 @@ class MolecularOptimizationAgent:
 
 def main():
     """Main function to run the enhanced molecular optimization agent"""
-    
+    # Parse CLI arguments
+    parser = argparse.ArgumentParser(description="Enhanced Molecular Optimization Agent")
+    parser.add_argument('-r','--rag', choices=['on', 'off'], default='on', help='Enable or disable RAG (default: on)')
+    parser.add_argument('-w','--beam_width', type=int, default=5, help='Beam width (default: 5)')
+    parser.add_argument('-i','--max_iterations', type=int, default=8, help='Maximum number of iterations (default: 8)')
+    args, unknown = parser.parse_known_args()
+    use_rag = (args.rag.lower() == 'on')
+
     # Check if trained models exist
     if not os.path.exists('./trained_models/'):
         print("Trained models not found. Please run the main.py first to train the models.")
         return
     
     # Initialize the agent
-    agent = MolecularOptimizationAgent(beam_width=5, max_iterations=8, convergence_threshold=0.01)
+    agent = MolecularOptimizationAgent(beam_width=args.beam_width, max_iterations=args.max_iterations, convergence_threshold=0.01, use_rag=use_rag)
     
     # Get CSV file path from user
     csv_file_path = input("Enter the path to your CSV file: ").strip()

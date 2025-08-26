@@ -344,7 +344,7 @@ def train_data(df: pd.DataFrame):
         scaler = MinMaxScaler()
         X_train = scaler.fit_transform(X_train)
         X_test = scaler.transform(X_test)
-        with open('./trained_models/scaler.pkl', 'wb') as f:
+        with open(f'./trained_models/scaler_{col}.pkl', 'wb') as f:
             pickle.dump(scaler, f)
         y_train_mean = np.mean(y_train)
         param_grid = {"alpha": np.logspace(-10, 2, 50), "gamma": np.logspace(-10, -1, 50), "kernel": ['rbf']}
@@ -418,18 +418,16 @@ def predict_properties(smiles: str) -> dict:
         elif descriptor.ndim > 2:
             descriptor = descriptor.reshape(1, -1)
         
-        # Load scaler and transform
-        with open('./trained_models/scaler.pkl', 'rb') as f:
-            scaler = pickle.load(f)
-        
-        # Ensure descriptor is 2D for scaler
-        descriptor_scaled = scaler.transform(descriptor)
-        
         property_list = ['Density', 'Detonation velocity', 'Explosion capacity', 'Explosion pressure', 'Explosion heat']
         predictions = {}
-        
+
         for key in property_list:
             try:
+                # Load scaler for each property and transform descriptor
+                with open(f'./trained_models/scaler_{key}.pkl', 'rb') as f:
+                    scaler = pickle.load(f)
+                descriptor_scaled = scaler.transform(descriptor)
+
                 with open(f'./trained_models/{key}.pkl', 'rb') as f:
                     model = pickle.load(f)
                     predictions[key] = model.predict(descriptor_scaled)[0]

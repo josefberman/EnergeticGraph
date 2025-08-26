@@ -17,6 +17,7 @@ load_dotenv()
 @dataclass
 class MoleculeCandidate:
     """Represents a molecule candidate in the beam search"""
+    id: int
     smiles: str
     name: str
     properties: Dict[str, float]
@@ -384,37 +385,43 @@ class BeamSearchOptimizer:
     
     def calculate_score(self, properties: Dict[str, float], target_properties: Dict[str, float], 
                        weights: Dict[str, float]) -> float:
-        """Calculate fitness score based on how close properties are to targets"""
-        score = 0.0
+        """Calculate weighted mean squared error (lower is better)."""
+        weighted_sum = 0.0
+        total_weight = 0.0
         
         for prop_name, target_value in target_properties.items():
             if prop_name in properties and prop_name in weights:
                 current_value = properties[prop_name]
-                # Normalize the difference (assuming positive values)
-                if target_value > 0:
-                    normalized_diff = abs(current_value - target_value) / target_value
-                    score += weights[prop_name] * (1.0 - normalized_diff)
+                weight = float(weights[prop_name])
+                diff = float(current_value) - float(target_value)
+                weighted_sum += weight * (diff * diff)
+                total_weight += weight
         
-        return score
+        return (weighted_sum / total_weight) if total_weight > 0 else weighted_sum
     
     def optimize_molecule(self, starting_smiles: str, target_properties: Dict[str, float], 
                          weights: Dict[str, float]) -> List[MoleculeCandidate]:
         """Run beam search optimization"""
         
         # Initialize beam with starting molecule
+        next_id = 1
         starting_properties = predict_properties(starting_smiles)
         starting_score = self.calculate_score(starting_properties, target_properties, weights)
         
         beam = [MoleculeCandidate(
+            id=next_id,
             smiles=starting_smiles,
             name="Starting molecule",
             properties=starting_properties,
             score=starting_score
         )]
+        next_id += 1
         
         self.visited_smiles.add(starting_smiles)
         
         best_candidates = []
+        best_score_overall = starting_score
+        no_improvement_iterations = 0
         
         for iteration in range(self.max_iterations):
             print(f"\n=== Iteration {iteration + 1} ===")
@@ -424,7 +431,7 @@ class BeamSearchOptimizer:
             all_candidates = []
             
             for candidate in beam:
-                print(f"  Modifying: {candidate.smiles[:50]}... (score: {candidate.score:.4f})")
+                print(f"  Modifying [ID {candidate.id}]: {candidate.smiles[:50]}... (score: {candidate.score:.4f})")
                 
                 # Get modifications
                 modifications = self.modifier.get_valid_modifications(candidate.smiles)
@@ -440,6 +447,7 @@ class BeamSearchOptimizer:
                         score = self.calculate_score(properties, target_properties, weights)
                         
                         new_candidate = MoleculeCandidate(
+                            id=next_id,
                             smiles=modified_smiles,
                             name=f"{candidate.name} + {group_name}",
                             properties=properties,
@@ -447,6 +455,7 @@ class BeamSearchOptimizer:
                             parent_smiles=candidate.smiles,
                             modification_description=description
                         )
+                        next_id += 1
                         
                         all_candidates.append(new_candidate)
                         self.visited_smiles.add(modified_smiles)
@@ -457,16 +466,30 @@ class BeamSearchOptimizer:
                         print(f"    -> Error predicting properties: {e}")
                         continue
             
-            # Select top candidates for next beam
-            all_candidates.sort(key=lambda x: x.score, reverse=True)
-            beam = all_candidates[:self.beam_width]
+            # Select top 3 candidates for next beam (minimize MSE)
+            all_candidates.sort(key=lambda x: x.score)
+            beam = all_candidates[:3]
+            print(f"Progressing to next iteration: {[c.id for c in beam]}")
             
-            # Keep track of best candidates
+            # Keep track of best candidates (preserve earliest highest by stable sort)
             best_candidates.extend(all_candidates[:self.beam_width])
+            # Stable sort: Python's sort is stable, so equal scores keep earliest insertion
             best_candidates.sort(key=lambda x: x.score, reverse=True)
             best_candidates = best_candidates[:self.beam_width * 2]
             
-            print(f"Best score in this iteration: {beam[0].score if beam else 'N/A'}")
+            print(f"Best score (MSE) in this iteration: {beam[0].score if beam else 'N/A'}")
+
+            # Convergence (minimization): stop if best score hasn't improved for 3 consecutive iterations
+            if len(beam) > 0:
+                iter_best = beam[0].score
+                if iter_best < best_score_overall:
+                    best_score_overall = iter_best
+                    no_improvement_iterations = 0
+                else:
+                    no_improvement_iterations += 1
+                    if no_improvement_iterations >= 3:
+                        print(f"Convergence reached: no improvement in {no_improvement_iterations} consecutive iterations")
+                        break
             
             # Early stopping if no improvement
             if not beam:
