@@ -1,0 +1,227 @@
+from typing import Dict, Any, List
+import os
+import threading
+import time
+import base64
+from io import BytesIO
+import streamlit as st
+from rdkit import Chem
+from rdkit.Chem import Draw
+from molecular_optimizer_agent import MolecularOptimizationAgent
+
+
+def smiles_to_png_bytes(smiles: str, width: int = 300, height: int = 220) -> bytes:
+    try:
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return b""
+        img = Draw.MolToImage(mol, size=(width, height))
+        buf = BytesIO()
+        img.save(buf, format='PNG')
+        return buf.getvalue()
+    except Exception:
+        return b""
+
+
+def ensure_session_state():
+    defaults = {
+        'uploaded_path': '',
+        'running': False,
+        'cancel_event': None,
+        'results': None,
+        'worker': None,
+        'result_holder': None,
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+
+def background_run(csv_path: str, use_rag: bool, beam_width: int, max_iterations: int, proceed_k: int, result_holder: dict, cancel_event: threading.Event | None, error_metric: str = 'mape'):
+    # Pure background execution: no Streamlit API here
+    try:
+        agent = MolecularOptimizationAgent(
+            beam_width=beam_width,
+            max_iterations=max_iterations,
+            convergence_threshold=0.01,
+            use_rag=use_rag,
+            early_stop_patience=None,
+            proceed_k=proceed_k,
+            error_metric=error_metric,
+        )
+        results = agent.process_csv_input(csv_path, verbose=False, cancel_event=cancel_event)
+        result_holder['results'] = results
+    except Exception as e:
+        result_holder['results'] = {'error': str(e)}
+
+
+def show_best(results: Dict[str, Any]):
+    start_smiles = results.get('starting_molecule', '')
+    best_smiles = results.get('best_molecule', '')
+    target_props = results.get('target_properties', {})
+    best_props = results.get('best_properties', {})
+
+    st.subheader('Best Result')
+    col1, col2 = st.columns(2)
+    with col1:
+        st.caption('Starting Molecule')
+        png = smiles_to_png_bytes(start_smiles)
+        if png:
+            st.image(png)
+        st.code(start_smiles, language=None)
+    with col2:
+        st.caption('Best Molecule')
+        png = smiles_to_png_bytes(best_smiles)
+        if png:
+            st.image(png)
+        st.code(best_smiles, language=None)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown('**Target Properties**')
+        if target_props:
+            st.table({k: [v] for k, v in target_props.items()})
+        else:
+            st.info('No target properties')
+    with c2:
+        st.markdown('**Best Molecule Properties**')
+        if best_props:
+            st.table({k: [v] for k, v in best_props.items()})
+        else:
+            st.info('No properties')
+
+
+def show_history(results: Dict[str, Any]):
+    st.subheader('Beam Search (per iteration; scores are MAPE)')
+    history: List[Dict[str, Any]] = results.get('search_history', []) or []
+    if not history:
+        st.info('No search history available')
+        return
+    for entry in history:
+        it = entry.get('iteration')
+        candidates = entry.get('candidates', [])
+        with st.expander(f'Iteration {it} (top {len(candidates)})', expanded=False):
+            cols = st.columns(3)
+            for idx, c in enumerate(candidates):
+                smiles = c.get('smiles', '')
+                score = c.get('score')
+                png = smiles_to_png_bytes(smiles)
+                with cols[idx % 3]:
+                    if png:
+                        st.image(png, use_container_width=True)
+                    st.caption(f'SMILES: {smiles[:80]}{"..." if len(smiles) > 80 else ""}')
+                    if score is not None:
+                        st.markdown(f'*Score (MAPE):* `{score:.4f}`')
+
+
+def main():
+    st.set_page_config(page_title='EnergeticGraph Optimizer', layout='wide')
+    ensure_session_state()
+
+    st.title('EnergeticGraph Optimizer')
+    st.caption('Design and optimize energetic molecules. Upload a CSV, configure search, and run the optimizer.')
+
+    with st.sidebar:
+        st.header('Input & Settings')
+        uploaded = st.file_uploader('Upload CSV', type=['csv'])
+        if uploaded is not None:
+            dest = os.path.join(os.getcwd(), 'uploaded_input.csv')
+            with open(dest, 'wb') as f:
+                f.write(uploaded.read())
+            st.session_state.uploaded_path = dest
+            st.success(f'Uploaded: {os.path.basename(dest)}')
+
+        use_rag = st.toggle('Use RAG', value=False)
+        metric = st.selectbox('Error metric', options=['mape', 'mse'], index=0)
+        beam_width = st.number_input('Beam width', value=5, min_value=1, max_value=30, step=1)
+        max_iterations = st.number_input('Max iterations', value=8, min_value=1, max_value=100, step=1)
+        proceed_k = st.number_input('Proceeding candidates (k)', value=3, min_value=1, max_value=30, step=1)
+
+        run_btn = st.button('Run Optimization', type='primary', use_container_width=True, disabled=st.session_state.running)
+        stop_btn = st.button('Stop', use_container_width=True)
+        reset_btn = st.button('Reset', use_container_width=True)
+
+    # Poll worker status first
+    if st.session_state.running and st.session_state.worker:
+        if not st.session_state.worker.is_alive():
+            # collect results
+            st.session_state.running = False
+            if st.session_state.result_holder:
+                st.session_state.results = st.session_state.result_holder.get('results')
+            st.session_state.worker = None
+            st.session_state.cancel_event = None
+            st.session_state.result_holder = None
+
+    if run_btn and not st.session_state.running:
+        csv_path = st.session_state.uploaded_path
+        if not csv_path or not os.path.exists(csv_path):
+            st.warning('Please upload a CSV file first')
+        else:
+            st.session_state.cancel_event = threading.Event()
+            st.session_state.result_holder = {}
+            worker = threading.Thread(
+                target=background_run,
+                args=(csv_path, use_rag, int(beam_width), int(max_iterations), int(proceed_k), st.session_state.result_holder, st.session_state.cancel_event, str(metric).lower()),
+                daemon=True,
+            )
+            st.session_state.worker = worker
+            st.session_state.running = True
+            worker.start()
+            st.rerun()
+
+    if stop_btn and st.session_state.running:
+        try:
+            if st.session_state.cancel_event and not st.session_state.cancel_event.is_set():
+                st.session_state.cancel_event.set()
+                st.info('Cancellation requested...')
+        except Exception:
+            pass
+
+    if reset_btn:
+        try:
+            if st.session_state.running and st.session_state.cancel_event and not st.session_state.cancel_event.is_set():
+                st.session_state.cancel_event.set()
+        except Exception:
+            pass
+        # delete uploaded file
+        path = st.session_state.uploaded_path
+        if path and os.path.exists(path):
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+        st.session_state.uploaded_path = ''
+        st.session_state.results = None
+        st.session_state.running = False
+        st.session_state.cancel_event = None
+        st.session_state.worker = None
+        st.session_state.result_holder = None
+        st.success('Reset complete')
+        st.rerun()
+
+    # Main content & auto-poll while running
+    if st.session_state.running:
+        st.info('Running in background; results will appear when finished.')
+        time.sleep(1.0)
+        try:
+            st.rerun()
+        except Exception:
+            try:
+                # Fallback for very old Streamlit versions
+                getattr(st, 'experimental_rerun')()
+            except Exception:
+                pass
+
+    results = st.session_state.results
+    if results and 'error' in results:
+        st.error(f"Error: {results['error']}")
+    elif results and not st.session_state.running:
+        show_best(results)
+        st.divider()
+        show_history(results)
+
+
+if __name__ == '__main__':
+    main()
+
+

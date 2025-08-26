@@ -52,13 +52,14 @@ class OptimizationState:
 class MolecularOptimizationAgent:
     """Enhanced molecular optimization agent using LangGraph"""
     
-    def __init__(self, beam_width: int = 5, max_iterations: int = 10, convergence_threshold: float = 0.01, use_rag: bool = True, early_stop_patience: int | None = 3, proceed_k: int = 3):
+    def __init__(self, beam_width: int = 5, max_iterations: int = 10, convergence_threshold: float = 0.01, use_rag: bool = True, early_stop_patience: int | None = 3, proceed_k: int = 3, error_metric: str = 'mape'):
         self.beam_width = beam_width
         self.max_iterations = max_iterations
         self.convergence_threshold = convergence_threshold
         self.use_rag = use_rag
         self.early_stop_patience = early_stop_patience
         self.proceed_k = proceed_k
+        self.error_metric = (error_metric or 'mape').lower()
         
         # Initialize the LLM with all available tools
         self.model = ChatOpenAI(model='gpt-4o', temperature=0).bind_tools([
@@ -107,16 +108,24 @@ class MolecularOptimizationAgent:
     
     def calculate_fitness_score(self, properties: Dict[str, float], target_properties: Dict[str, float], 
                                weights: Dict[str, float]) -> float:
-        """Calculate weighted mean squared error (lower is better)."""
+        """Calculate weighted loss: MAPE or MSE depending on self.error_metric (lower is better)."""
         weighted_sum = 0.0
         total_weight = 0.0
+        epsilon = 1e-9
+        use_mape = (self.error_metric == 'mape')
         
         for prop_name, target_value in target_properties.items():
             if prop_name in properties and prop_name in weights:
-                current_value = properties[prop_name]
+                current_value = float(properties[prop_name])
+                target_val = float(target_value)
                 weight = float(weights[prop_name])
-                diff = float(current_value) - float(target_value)
-                weighted_sum += weight * (diff * diff)
+                if use_mape:
+                    denom = max(epsilon, abs(target_val))
+                    err = abs(current_value - target_val) / denom
+                else:
+                    diff = current_value - target_val
+                    err = diff * diff
+                weighted_sum += weight * err
                 total_weight += weight
         
         return (weighted_sum / total_weight) if total_weight > 0 else weighted_sum
@@ -273,13 +282,13 @@ class MolecularOptimizationAgent:
                     all_candidates.append(child)
                     visited_smiles.add(child['smiles'])
                     if verbose:
-                        print(f"    -> SMILES: {child['smiles']} | modification: {child['modification']} | score: {child['score']:.4f}")
+                        print(f"    -> SMILES: {child['smiles']} | modification: {child['modification']} | score (MAPE): {child['score']:.4f}")
                     # Update best (minimize overall MSE)
                     if child['score'] < state.best_score:
                         state.best_score = child['score']
                         state.best_molecule = child['smiles']
                         if verbose:
-                            print(f"    *** NEW BEST (MSE): {child['score']:.4f} ***")
+                            print(f"    *** NEW BEST (MAPE): {child['score']:.4f} ***")
             
             # Backfill across parents to reach at least proceed_k total candidates, if possible
             if len(all_candidates) < self.proceed_k:
@@ -320,9 +329,80 @@ class MolecularOptimizationAgent:
                         visited_smiles.add(mod_smiles)
                         needed_total -= 1
                         if verbose:
-                            print(f"    -> SMILES: {child['smiles']} | modification: {child['modification']} | score: {child['score']:.4f}")
+                            print(f"    -> SMILES: {child['smiles']} | modification: {child['modification']} | score (MAPE): {child['score']:.4f}")
+
+            # Last-resort exhaustive fallback: accept any RDKit-parseable modifications if still empty
+            if len(all_candidates) == 0:
+                if verbose:
+                    print("    No valid candidates after standard generation; attempting exhaustive fallback...")
+                from rdkit import Chem as _Chem
+                parents_sorted = sorted(beam, key=lambda x: x['score'])
+                for parent in parents_sorted:
+                    try:
+                        raw_mods = generate_molecular_modifications.invoke(parent['smiles'], max_modifications=max(self.beam_width * 50, self.proceed_k * 20))
+                    except Exception:
+                        raw_mods = []
+                    for mod in raw_mods:
+                        if len(all_candidates) >= self.proceed_k:
+                            break
+                        mod_smiles = mod.get('modified_smiles') or mod.get('smiles')
+                        if not mod_smiles or mod_smiles in visited_smiles:
+                            continue
+                        try:
+                            mol_ok = _Chem.MolFromSmiles(mod_smiles) is not None
+                        except Exception:
+                            mol_ok = False
+                        if not mol_ok:
+                            continue
+                        # Compute properties without strict structural validation
+                        properties = predict_properties.invoke(mod_smiles)
+                        score = self.calculate_fitness_score(properties, target_properties, weights)
+                        child = {
+                            'smiles': mod_smiles,
+                            'properties': properties,
+                            'score': score,
+                            'parent': parent['smiles'],
+                            'modification': mod.get('description', 'Exhaustive fallback modification'),
+                            'iteration': iteration + 1,
+                            'validation': {'valid': True}
+                        }
+                        child['id'] = next_id
+                        next_id += 1
+                        all_candidates.append(child)
+                        visited_smiles.add(mod_smiles)
+                        if verbose:
+                            print(f"    -> [Fallback] SMILES: {child['smiles']} | score (MAPE): {child['score']:.4f}")
+                    if len(all_candidates) >= self.proceed_k:
+                        break
+                # Absolute last-ditch: apply simple hydrogen substitution if still empty
+                if len(all_candidates) == 0:
+                    for parent in parents_sorted:
+                        try:
+                            simple = self._substitute_hydrogen(parent['smiles'])
+                        except Exception:
+                            simple = None
+                        if simple and simple not in visited_smiles:
+                            properties = predict_properties.invoke(simple)
+                            score = self.calculate_fitness_score(properties, target_properties, weights)
+                            child = {
+                                'smiles': simple,
+                                'properties': properties,
+                                'score': score,
+                                'parent': parent['smiles'],
+                                'modification': 'Simple hydrogen substitution (fallback)',
+                                'iteration': iteration + 1,
+                                'validation': {'valid': True}
+                            }
+                            child['id'] = next_id
+                            next_id += 1
+                            all_candidates.append(child)
+                            visited_smiles.add(simple)
+                            if verbose:
+                                print(f"    -> [Fallback] SMILES: {child['smiles']} | score (MAPE): {child['score']:.4f}")
+                            if len(all_candidates) >= self.proceed_k:
+                                break
             
-            # Select top candidates for next beam (minimize overall MSE)
+            # Select top candidates for next beam (minimize overall MAPE)
             all_candidates.sort(key=lambda x: x['score'])
             beam = all_candidates[:self.proceed_k]
             if verbose and len(beam) > 0:
@@ -338,8 +418,8 @@ class MolecularOptimizationAgent:
             })
             
             if verbose:
-                print(f"\nBest score (MSE) in iteration {iteration + 1}: {beam[0]['score'] if beam else 'N/A'}")
-                print(f"Overall best score (MSE): {state.best_score:.4f}")
+                print(f"\nBest score (MAPE) in iteration {iteration + 1}: {beam[0]['score'] if beam else 'N/A'}")
+                print(f"Overall best score (MAPE): {state.best_score:.4f}")
             
             # Check for convergence (minimization) with configurable patience
             if len(beam) > 0:
@@ -936,16 +1016,142 @@ class MolecularOptimizationAgent:
         # Determine starting molecule based on RAG flag
         if self.use_rag:
             starting_molecule = self._find_starting_molecule_with_rag(target_properties, verbose)
+            # If RAG fails, try sample CSV based selection before erroring out
             if not starting_molecule:
-                return {"error": "Could not find suitable starting molecule using RAG"}
+                try:
+                    sample_based = self._find_starting_molecule_from_samples(target_properties, weights, verbose)
+                except Exception:
+                    sample_based = None
+                if sample_based:
+                    starting_molecule = sample_based
+                else:
+                    return {"error": "Could not find suitable starting molecule using RAG"}
         else:
-            # RAG disabled: use TNT as default starting molecule
-            starting_molecule = 'Cc1c(cc(cc1[N+](=O)[O-])[N+](=O)[O-])[N+](=O)[O-]'
+            # RAG disabled: try sample CSV based selection; fallback to TNT
+            try:
+                starting_molecule = self._find_starting_molecule_from_samples(target_properties, weights, verbose)
+            except Exception:
+                starting_molecule = None
+            if not starting_molecule:
+                # fallback to TNT
+                starting_molecule = 'Cc1c(cc(cc1[N+](=O)[O-])[N+](=O)[O-])[N+](=O)[O-]'
         
         # Run optimization
         results = self.run_beam_search_optimization(starting_molecule, target_properties, weights, verbose, cancel_event=cancel_event)
         
         return results
+
+    def _find_starting_molecule_from_samples(self, target_properties: Dict[str, float], weights: Dict[str, float], verbose: bool = True) -> Optional[str]:
+        """Select a starting molecule from extracted_chemical_data.csv (preferred) or agent_sample.csv based on similarity.
+        Expects a CSV with a 'SMILES' column and property columns matching the prediction properties.
+        If property columns are missing, predicts them on-the-fly.
+        """
+        # Use only the extracted_chemical_data.csv dataset
+        p = os.path.join(os.getcwd(), 'extracted_chemical_data.csv')
+        sample_path = p if os.path.exists(p) else None
+        if sample_path is None:
+            if verbose:
+                print("  Sample CSV 'extracted_chemical_data.csv' not found")
+            return None
+        try:
+            df = pd.read_csv(sample_path)
+        except Exception as e:
+            if verbose:
+                print(f"  Failed reading {os.path.basename(sample_path)}: {e}")
+            return None
+        smiles_col = None
+        for c in ['SMILES', 'smiles', 'Smiles']:
+            if c in df.columns:
+                smiles_col = c
+                break
+        if smiles_col is None:
+            if verbose:
+                print(f"  {os.path.basename(sample_path)} missing 'SMILES' column; skipping sample-based selection")
+            return None
+        property_columns = list(target_properties.keys())
+        # Reference SMILES for structural similarity (TNT)
+        ref_smiles_list = ['CC1=CC=C(C=C1)[N+](=O)[O-]']
+        # Collect candidates with property score and similarity
+        candidates: List[Dict[str, Any]] = []
+        from rdkit import Chem as _Chem
+        from rdkit import DataStructs as _DataStructs
+        # Prefer new MorganGenerator to avoid deprecation warnings
+        try:
+            from rdkit.Chem import rdFingerprintGenerator as _FPGen
+            _morgan_gen = _FPGen.GetMorganGenerator(radius=2, fpSize=2048)
+        except Exception:
+            _morgan_gen = None
+            from rdkit.Chem import AllChem as _AllChem  # fallback
+        ref_fps = []
+        for r in ref_smiles_list:
+            try:
+                rm = _Chem.MolFromSmiles(r)
+                if rm is not None:
+                    if _morgan_gen is not None:
+                        ref_fps.append(_morgan_gen.GetFingerprint(rm))
+                    else:
+                        ref_fps.append(_AllChem.GetMorganFingerprintAsBitVect(rm, 2, nBits=2048))
+            except Exception:
+                continue
+
+        for _, row in df.iterrows():
+            smi = str(row[smiles_col]) if not pd.isna(row[smiles_col]) else ''
+            if not smi:
+                continue
+            # Gather properties from row if present; otherwise predict
+            props: Dict[str, float] = {}
+            missing = False
+            for p in property_columns:
+                if p in df.columns and not pd.isna(row[p]):
+                    props[p] = float(row[p])
+                else:
+                    missing = True
+            if missing:
+                try:
+                    props = predict_properties.invoke(smi)
+                except Exception:
+                    continue
+            try:
+                prop_score = self.calculate_fitness_score(props, target_properties, weights)
+            except Exception:
+                continue
+            # Validate molecule structure (non-fatal)
+            try:
+                valid = validate_molecule_structure.invoke(smi)
+                if not valid.get('valid', False):
+                    continue
+            except Exception:
+                pass
+            # Structural similarity to reference(s)
+            sim = 0.0
+            try:
+                m = _Chem.MolFromSmiles(smi)
+                if m is not None and ref_fps:
+                    if _morgan_gen is not None:
+                        fp = _morgan_gen.GetFingerprint(m)
+                    else:
+                        fp = _AllChem.GetMorganFingerprintAsBitVect(m, 2, nBits=2048)
+                    sim = max((_DataStructs.TanimotoSimilarity(fp, rfp) for rfp in ref_fps), default=0.0)
+            except Exception:
+                sim = 0.0
+            candidates.append({'smiles': smi, 'prop_score': prop_score, 'sim': sim})
+
+        if not candidates:
+            return None
+
+        # Normalize property scores to [0,1] and combine with similarity (higher sim is better)
+        min_s = min(c['prop_score'] for c in candidates)
+        max_s = max(c['prop_score'] for c in candidates)
+        denom = (max_s - min_s) if (max_s - min_s) > 1e-12 else 1.0
+        alpha = 0.7  # weight for property fit; 0.3 for structural similarity
+        for c in candidates:
+            prop_norm = (c['prop_score'] - min_s) / denom
+            c['combined'] = alpha * prop_norm + (1 - alpha) * (1 - c['sim'])
+
+        best = min(candidates, key=lambda x: x['combined'])
+        if verbose:
+            print(f"  Using sample-based starting molecule from {os.path.basename(sample_path)}: {best['smiles']} (prop_score: {best['prop_score']:.4f}, sim: {best['sim']:.3f})")
+        return best['smiles']
     
     def _find_starting_molecule_with_rag(self, target_properties: Dict[str, float], verbose: bool = True) -> Optional[str]:
         """Find a starting molecule using RAG based on target properties"""
@@ -1150,7 +1356,8 @@ def main():
     parser.add_argument('-w','--beam_width', type=int, default=5, help='Beam width (default: 5)')
     parser.add_argument('-i','--max_iterations', type=int, default=8, help='Maximum number of iterations (default: 8)')
     parser.add_argument('-k','--proceed_k', type=int, default=3, help='Number of candidates to proceed each iteration (default: 3)')
-    parser.add_argument('--gui', action='store_true', help='Launch NiceGUI interface instead of CLI run')
+    parser.add_argument('--gui', action='store_true', help='Launch GUI (Streamlit preferred, falls back to NiceGUI)')
+    parser.add_argument('--metric', choices=['mape', 'mse'], default='mape', help='Error metric to optimize (default: mape)')
     args, unknown = parser.parse_known_args()
     use_rag = (args.rag.lower() == 'on')
 
@@ -1162,15 +1369,21 @@ def main():
     # Launch GUI if requested
     if args.gui:
         try:
-            from nicegui_gui import run_gui
-        except Exception as e:
-            print(f"Failed to import GUI: {e}")
-            return
-        run_gui()
+            from streamlit_gui import main as streamlit_main
+            print('Launching Streamlit GUI (run separately): streamlit run streamlit_gui.py')
+        except Exception:
+            try:
+                from nicegui_gui import run_gui
+                run_gui()
+                return
+            except Exception as e:
+                print(f"Failed to import GUI: {e}")
+                return
+        # If streamlit is preferred, provide guidance instead of blocking here.
         return
 
     # Initialize the agent
-    agent = MolecularOptimizationAgent(beam_width=args.beam_width, max_iterations=args.max_iterations, convergence_threshold=0.01, use_rag=use_rag, proceed_k=args.proceed_k)
+    agent = MolecularOptimizationAgent(beam_width=args.beam_width, max_iterations=args.max_iterations, convergence_threshold=0.01, use_rag=use_rag, proceed_k=args.proceed_k, error_metric=args.metric)
     
     # Get CSV file path from user
     csv_file_path = input("Enter the path to your CSV file: ").strip()

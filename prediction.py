@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from rdkit import Chem
 from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.kernel_ridge import KernelRidge
+from xgboost import XGBRegressor
 from sklearn.metrics import r2_score, root_mean_squared_error, mean_absolute_error
 from sklearn.preprocessing import MinMaxScaler
 import matplotlib.pyplot as plt
@@ -347,8 +347,25 @@ def train_data(df: pd.DataFrame):
         with open(f'./trained_models/scaler_{col}.pkl', 'wb') as f:
             pickle.dump(scaler, f)
         y_train_mean = np.mean(y_train)
-        param_grid = {"alpha": np.logspace(-10, 2, 50), "gamma": np.logspace(-10, -1, 50), "kernel": ['rbf']}
-        grd_srch = GridSearchCV(KernelRidge(), param_grid, cv=5, scoring='neg_mean_squared_error', verbose=0)
+        # Kernel Ridge was previously used as the estimator:
+        # param_grid = {"alpha": np.logspace(-10, 2, 50), "gamma": np.logspace(-10, -1, 50), "kernel": ['rbf']}
+        # grd_srch = GridSearchCV(KernelRidge(), param_grid, cv=5, scoring='neg_mean_squared_error', verbose=0)
+
+        # Use XGBoost regressor with hyperparameter optimization instead
+        xgb_model = XGBRegressor(
+            objective='reg:squarederror',
+            tree_method='hist',
+            n_jobs=-1,
+            random_state=42
+        )
+        param_grid_xgb = {
+            "n_estimators": [200, 400, 800],
+            "max_depth": [3, 5, 7],
+            "learning_rate": [0.01, 0.05, 0.1],
+            "subsample": [0.7, 1.0],
+            "colsample_bytree": [0.7, 1.0]
+        }
+        grd_srch = GridSearchCV(xgb_model, param_grid_xgb, cv=5, scoring='neg_mean_squared_error', verbose=0)
         # param_grid = {"n_estimators": np.arange(100, 500, 100), "max_depth": np.arange(3, 20)}
         # grd_srch = GridSearchCV(RandomForestRegressor(), param_grid, cv=5, scoring='neg_mean_squared_error', verbose=0)
         # param_grid = {"kernel": ["rbf"], "degree": np.arange(1, 4), "gamma": np.logspace(-10, -1, 50),
