@@ -52,11 +52,13 @@ class OptimizationState:
 class MolecularOptimizationAgent:
     """Enhanced molecular optimization agent using LangGraph"""
     
-    def __init__(self, beam_width: int = 5, max_iterations: int = 10, convergence_threshold: float = 0.01, use_rag: bool = True):
+    def __init__(self, beam_width: int = 5, max_iterations: int = 10, convergence_threshold: float = 0.01, use_rag: bool = True, early_stop_patience: int | None = 3, proceed_k: int = 3):
         self.beam_width = beam_width
         self.max_iterations = max_iterations
         self.convergence_threshold = convergence_threshold
         self.use_rag = use_rag
+        self.early_stop_patience = early_stop_patience
+        self.proceed_k = proceed_k
         
         # Initialize the LLM with all available tools
         self.model = ChatOpenAI(model='gpt-4o', temperature=0).bind_tools([
@@ -120,7 +122,7 @@ class MolecularOptimizationAgent:
         return (weighted_sum / total_weight) if total_weight > 0 else weighted_sum
     
     def run_beam_search_optimization(self, starting_molecule: str, target_properties: Dict[str, float], 
-                                   weights: Dict[str, float], verbose: bool = True) -> Dict[str, Any]:
+                                   weights: Dict[str, float], verbose: bool = True, cancel_event: Any = None) -> Dict[str, Any]:
         """Run beam search optimization with LangGraph integration"""
         
         # Initialize optimization state
@@ -178,6 +180,14 @@ class MolecularOptimizationAgent:
         
         # Main optimization loop
         for iteration in range(self.max_iterations):
+            # Cooperative cancellation
+            try:
+                if cancel_event is not None and getattr(cancel_event, 'is_set', lambda: False)():
+                    if verbose:
+                        print("\nOptimization cancelled by user")
+                    break
+            except Exception:
+                pass
             state.iteration = iteration
             
             if verbose:
@@ -194,6 +204,14 @@ class MolecularOptimizationAgent:
                     print(f"\n  Modifying [ID {candidate.get('id','?')}]: {candidate['smiles']} (score: {candidate['score']:.4f})")
                 
                 # Use LangGraph and RAG to generate modifications
+                # Cancellation check per parent
+                try:
+                    if cancel_event is not None and getattr(cancel_event, 'is_set', lambda: False)():
+                        if verbose:
+                            print("    Cancellation requested; stopping candidate generation")
+                        break
+                except Exception:
+                    pass
                 modifications = self._get_modifications_with_agent(candidate['smiles'], target_properties, candidate['score'], verbose)
                 
                 parent_candidates = []
@@ -246,7 +264,7 @@ class MolecularOptimizationAgent:
                             'iteration': iteration + 1,
                             'validation': validation
                         })
-                # Select up to beam_width (minimize MSE); don't fail if fewer
+                # Select up to beam_width (minimize overall MSE)
                 parent_candidates.sort(key=lambda x: x['score'])
                 selected_children = parent_candidates[:min(self.beam_width, len(parent_candidates))]
                 for child in selected_children:
@@ -256,16 +274,16 @@ class MolecularOptimizationAgent:
                     visited_smiles.add(child['smiles'])
                     if verbose:
                         print(f"    -> SMILES: {child['smiles']} | modification: {child['modification']} | score: {child['score']:.4f}")
-                    # Update best (minimize)
+                    # Update best (minimize overall MSE)
                     if child['score'] < state.best_score:
                         state.best_score = child['score']
                         state.best_molecule = child['smiles']
                         if verbose:
                             print(f"    *** NEW BEST (MSE): {child['score']:.4f} ***")
             
-            # Backfill across parents to reach at least 3 total candidates, if possible
-            if len(all_candidates) < 3:
-                needed_total = 3 - len(all_candidates)
+            # Backfill across parents to reach at least proceed_k total candidates, if possible
+            if len(all_candidates) < self.proceed_k:
+                needed_total = self.proceed_k - len(all_candidates)
                 parents_sorted = sorted(beam, key=lambda x: x['score'])
                 existing_smiles = {c['smiles'] for c in all_candidates} | visited_smiles
                 for parent in parents_sorted:
@@ -304,9 +322,9 @@ class MolecularOptimizationAgent:
                         if verbose:
                             print(f"    -> SMILES: {child['smiles']} | modification: {child['modification']} | score: {child['score']:.4f}")
             
-            # Select top 3 candidates for next beam (minimize MSE)
+            # Select top candidates for next beam (minimize overall MSE)
             all_candidates.sort(key=lambda x: x['score'])
-            beam = all_candidates[:3]
+            beam = all_candidates[:self.proceed_k]
             if verbose and len(beam) > 0:
                 print(f"  Progressing to next iteration with IDs: {[c.get('id','?') for c in beam]}")
             
@@ -323,20 +341,26 @@ class MolecularOptimizationAgent:
                 print(f"\nBest score (MSE) in iteration {iteration + 1}: {beam[0]['score'] if beam else 'N/A'}")
                 print(f"Overall best score (MSE): {state.best_score:.4f}")
             
-            # Check for convergence (minimization): stop after 3 consecutive iterations with no improvement
+            # Check for convergence (minimization) with configurable patience
             if len(beam) > 0:
                 if state.best_score < previous_best_score:
                     no_improvement_iterations = 0
                     previous_best_score = state.best_score
                 else:
                     no_improvement_iterations += 1
-                    if no_improvement_iterations >= 3:
+                    if self.early_stop_patience and no_improvement_iterations >= self.early_stop_patience:
                         if verbose:
                             print(f"\nConvergence reached: no improvement in {no_improvement_iterations} consecutive iterations")
                         break
             
             # Early stopping if no valid modifications
             if not beam:
+                # If cancelled, allow graceful exit
+                try:
+                    if cancel_event is not None and getattr(cancel_event, 'is_set', lambda: False)():
+                        break
+                except Exception:
+                    pass
                 raise RuntimeError("No valid modifications found to proceed to next iteration")
         
         # Prepare final results
@@ -880,7 +904,7 @@ class MolecularOptimizationAgent:
         except Exception as e:
             raise RuntimeError(f"Error generating modifications with agent: {e}")
     
-    def process_csv_input(self, csv_file_path: str, verbose: bool = True) -> Dict[str, Any]:
+    def process_csv_input(self, csv_file_path: str, verbose: bool = True, cancel_event: Any = None) -> Dict[str, Any]:
         """Process CSV input and run optimization without starting molecule"""
         
         # Read CSV file
@@ -919,7 +943,7 @@ class MolecularOptimizationAgent:
             starting_molecule = 'Cc1c(cc(cc1[N+](=O)[O-])[N+](=O)[O-])[N+](=O)[O-]'
         
         # Run optimization
-        results = self.run_beam_search_optimization(starting_molecule, target_properties, weights, verbose)
+        results = self.run_beam_search_optimization(starting_molecule, target_properties, weights, verbose, cancel_event=cancel_event)
         
         return results
     
@@ -1125,6 +1149,8 @@ def main():
     parser.add_argument('-r','--rag', choices=['on', 'off'], default='on', help='Enable or disable RAG (default: on)')
     parser.add_argument('-w','--beam_width', type=int, default=5, help='Beam width (default: 5)')
     parser.add_argument('-i','--max_iterations', type=int, default=8, help='Maximum number of iterations (default: 8)')
+    parser.add_argument('-k','--proceed_k', type=int, default=3, help='Number of candidates to proceed each iteration (default: 3)')
+    parser.add_argument('--gui', action='store_true', help='Launch NiceGUI interface instead of CLI run')
     args, unknown = parser.parse_known_args()
     use_rag = (args.rag.lower() == 'on')
 
@@ -1133,8 +1159,18 @@ def main():
         print("Trained models not found. Please run the main.py first to train the models.")
         return
     
+    # Launch GUI if requested
+    if args.gui:
+        try:
+            from nicegui_gui import run_gui
+        except Exception as e:
+            print(f"Failed to import GUI: {e}")
+            return
+        run_gui()
+        return
+
     # Initialize the agent
-    agent = MolecularOptimizationAgent(beam_width=args.beam_width, max_iterations=args.max_iterations, convergence_threshold=0.01, use_rag=use_rag)
+    agent = MolecularOptimizationAgent(beam_width=args.beam_width, max_iterations=args.max_iterations, convergence_threshold=0.01, use_rag=use_rag, proceed_k=args.proceed_k)
     
     # Get CSV file path from user
     csv_file_path = input("Enter the path to your CSV file: ").strip()
