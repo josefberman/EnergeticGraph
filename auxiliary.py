@@ -1,4 +1,6 @@
-from sentence_transformers import SentenceTransformer, models
+import os
+# Prevent Transformers from importing TensorFlow/Keras to avoid Keras 3 incompat error
+os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
 from langchain_huggingface import HuggingFaceEmbeddings
 from transformers import logging as hf_logging
 import logging
@@ -14,6 +16,8 @@ except Exception:
     _DEVICE = "cpu"
 
 def ChemBERT_ChEMBL_pretrained():
+    # Import sentence-transformers lazily to avoid importing Transformers/TF at module import time
+    from sentence_transformers import SentenceTransformer, models
     # 2. load the raw HuggingFace ChemBERT model as a Transformer module
     word_embedding_model = models.Transformer(
         model_name_or_path="jonghyunlee/ChemBERT_ChEMBL_pretrained",

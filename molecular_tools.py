@@ -3,6 +3,7 @@ import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning, module="importlib._bootstrap")
 
 from typing import List, Dict, Any, Optional
+import random
 from rdkit import Chem
 from rdkit.Chem import Descriptors
 from rdkit.Chem.FilterCatalog import FilterCatalog, FilterCatalogParams
@@ -158,69 +159,87 @@ class MolecularGenerator:
         }
     
     def generate_modifications(self, smiles: str, max_modifications: int = 10) -> List[Dict[str, Any]]:
-        """Generate valid molecular modifications"""
+        """Generate valid molecular modifications with randomized strategy order."""
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
             raise ValueError("Invalid SMILES passed to generate_modifications")
-        
-        modifications = []
-        validator = MolecularValidator()
+
         seen_smiles: set = set()
-        
-        # Strategy 1: Add energetic groups to available positions
-        for group_name, group_smiles in self.common_substituents.items():
+        modifications: List[Dict[str, Any]] = []
+
+        # Define strategies as callables returning a list of candidate modifications
+        def strat_add_groups(limit: int) -> List[Dict[str, Any]]:
+            return self._generate_add_group_modifications(smiles, limit)
+
+        # Weighted random order: make ring closures less common than other strategies
+        weighted_pool = [
+            (lambda limit: strat_add_groups(limit), 1.0),
+            (lambda limit: self._generate_removal_modifications(smiles), 1.0),
+            (lambda limit: self._generate_ring_modifications(smiles), 1.0),
+            (lambda limit: self._generate_ring_openings(smiles), 1.0),
+            (lambda limit: self._generate_ring_closures(smiles), 0.3),  # less common
+            (lambda limit: self._generate_con_additions(smiles), 1.0),
+            (lambda limit: self._generate_con_replacements(smiles), 1.0),
+            (lambda limit: self._generate_con_removals(smiles), 1.0),
+        ]
+
+        # Sample a weighted permutation without replacement
+        strategies_ordered = []
+        pool = list(weighted_pool)
+        while pool:
+            weights = [w for _, w in pool]
+            idx = random.choices(range(len(pool)), weights=weights, k=1)[0]
+            strategies_ordered.append(pool.pop(idx)[0])
+
+        for strategy in strategies_ordered:
             if len(modifications) >= max_modifications:
                 break
-            # Try to add the group to different positions (diversify positions)
             remaining = max_modifications - len(modifications)
-            for variant_smiles in self._add_substituent_variants(smiles, group_smiles, remaining):
-                if variant_smiles == smiles or variant_smiles in seen_smiles:
+            # Generate and shuffle candidates from this strategy
+            candidates = strategy(remaining) or []
+            random.shuffle(candidates)
+            for cand in candidates:
+                if len(modifications) >= max_modifications:
+                    break
+                smi = cand.get("smiles")
+                if not smi or smi == smiles or smi in seen_smiles:
+                    continue
+                modifications.append(cand)
+                seen_smiles.add(smi)
+
+        return modifications
+
+    def _generate_add_group_modifications(self, smiles: str, limit: int) -> List[Dict[str, Any]]:
+        """Generate modifications by adding energetic groups at randomized positions."""
+        modifications: List[Dict[str, Any]] = []
+        validator = MolecularValidator()
+        seen_smiles: set = set()
+
+        # Randomize group order
+        items = list(self.common_substituents.items())
+        random.shuffle(items)
+
+        for group_name, group_smiles in items:
+            if len(modifications) >= limit:
+                break
+            # Generate positional variants and shuffle them
+            variants = self._add_substituent_variants(smiles, group_smiles, max(1, limit - len(modifications)))
+            random.shuffle(variants)
+            for variant_smiles in variants:
+                if len(modifications) >= limit:
+                    break
+                if not variant_smiles or variant_smiles == smiles or variant_smiles in seen_smiles:
                     continue
                 validation = validator.validate_molecule(variant_smiles)
-                if validation["valid"]:
+                if validation.get("valid", False):
                     modifications.append({
                         "smiles": variant_smiles,
                         "description": f"Added {group_name} group",
                         "group": group_name,
-                        "validation": validation
+                        "validation": validation,
                     })
                     seen_smiles.add(variant_smiles)
-                if len(modifications) >= max_modifications:
-                    break
-        
-        # Strategy 2: Remove existing substituents
-        removal_modifications = self._generate_removal_modifications(smiles)
-        modifications.extend(removal_modifications[:max_modifications - len(modifications)])
-        
-        # Strategy 3: Ring modifications (heteroatom substitutions)
-        ring_modifications = self._generate_ring_modifications(smiles)
-        modifications.extend(ring_modifications[:max_modifications - len(modifications)])
-        
-        # Strategy 4: Ring opening (aromatic and non-aromatic)
-        if len(modifications) < max_modifications:
-            ring_openings = self._generate_ring_openings(smiles)
-            modifications.extend(ring_openings[:max_modifications - len(modifications)])
-        
-        # Strategy 5: Ring closing (form new rings from chains)
-        if len(modifications) < max_modifications:
-            ring_closures = self._generate_ring_closures(smiles)
-            modifications.extend(ring_closures[:max_modifications - len(modifications)])
-        
-        # Strategy 6: Direct additions of C/N/O atoms
-        if len(modifications) < max_modifications:
-            con_adds = self._generate_con_additions(smiles)
-            modifications.extend(con_adds[:max_modifications - len(modifications)])
-        
-        # Strategy 7: Replacements (rearrangements) among C/N/O atoms
-        if len(modifications) < max_modifications:
-            con_repl = self._generate_con_replacements(smiles)
-            modifications.extend(con_repl[:max_modifications - len(modifications)])
-        
-        # Strategy 8: Targeted removals of terminal C/N/O atoms
-        if len(modifications) < max_modifications:
-            con_rems = self._generate_con_removals(smiles)
-            modifications.extend(con_rems[:max_modifications - len(modifications)])
-        
+
         return modifications
     
     def _add_substituent(self, smiles: str, substituent_smiles: str) -> Optional[str]:
@@ -872,7 +891,7 @@ def validate_molecule_structure(smiles: str) -> Dict[str, Any]:
     return validator.validate_molecule(smiles)
 
 @tool
-def generate_molecular_modifications(smiles: str, max_modifications: int = 10) -> List[Dict[str, Any]]:
+def generate_molecular_modifications(smiles: str, max_modifications: int = 2) -> List[Dict[str, Any]]:
     """
     Generates valid molecular modifications for energetic materials optimization.
     

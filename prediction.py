@@ -9,6 +9,7 @@ from sklearn.model_selection import train_test_split, GridSearchCV
 from xgboost import XGBRegressor
 from sklearn.metrics import r2_score, root_mean_squared_error, mean_absolute_error
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.neural_network import MLPRegressor
 import matplotlib.pyplot as plt
 from langchain_core.tools import tool
 import statsmodels.api as sm
@@ -333,6 +334,16 @@ def create_descriptor(smiles: str):
             get_h_count(smiles),
             get_f_count(smiles)
             ]
+    # mol = Chem.MolFromSmiles(smiles)
+    # if mol is None:
+    #     return np.zeros(64, dtype=float)
+    # featurizer = dc.feat.CoulombMatrixEig(64)
+    # # Use standard DeepChem API to ensure correct shape: (64,)
+    # features = featurizer.featurize([mol])
+    # if isinstance(features, (list, tuple)):
+    #     features = np.asarray(features)
+    # # features should be shape (1, 64); return the 1D vector
+    # return features[0]
 
 
 def train_data(df: pd.DataFrame):
@@ -404,6 +415,84 @@ def train_data(df: pd.DataFrame):
         plt.show()
 
 
+def train_data_nn(df: pd.DataFrame):
+    """
+    Trains a neural network on Coulomb matrix eigenvalue descriptors to predict
+    the 5 energetic material properties jointly. Uses an 80/20 train/test split,
+    a 64-neuron input (matching descriptor length), 3 hidden layers, and saves
+    the scaler and model.
+    """
+    # Prepare descriptors (length 64 per molecule)
+    df['desc'] = df['SMILES'].apply(create_descriptor)
+    X = np.array(df['desc'].tolist())
+
+    # Target properties (multi-output)
+    property_list = ['Density', 'Detonation velocity', 'Explosion capacity', 'Explosion pressure', 'Explosion heat']
+    y = df[property_list].values
+
+    # 80/20 split
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    # Scale inputs
+    scaler = MinMaxScaler()
+    X_train = scaler.fit_transform(X_train)
+    X_test = scaler.transform(X_test)
+    with open('./trained_models/scaler_nn_multi.pkl', 'wb') as f:
+        pickle.dump(scaler, f)
+
+    # MLP with 3 hidden layers; input size implied by X_train.shape[1] (64)
+    mlp = MLPRegressor(
+        hidden_layer_sizes=(64, 32, 16),
+        activation='relu',
+        solver='adam',
+        random_state=42,
+        max_iter=1000,
+        early_stopping=True,
+        n_iter_no_change=20
+    )
+
+    # Fit multi-output regressor
+    mlp.fit(X_train, y_train)
+    with open('./trained_models/nn_multi_output.pkl', 'wb') as f:
+        pickle.dump(mlp, f)
+
+    # Predictions
+    y_train_pred = mlp.predict(X_train)
+    y_test_pred = mlp.predict(X_test)
+
+    # Metrics and plots per property
+    for i, col in enumerate(property_list):
+        print(col)
+        print(f'  train r2 score: {r2_score(y_train[:, i], y_train_pred[:, i]):.4f}')
+        print(f'  test r2 score: {r2_score(y_test[:, i], y_test_pred[:, i]):.4f}')
+        print(f'  test rmse: {root_mean_squared_error(y_test[:, i], y_test_pred[:, i]):.4f}')
+        y_train_mean = np.mean(y_train[:, i])
+        print(f'  test rrmse: {root_mean_squared_error(y_test[:, i], y_test_pred[:, i]) / (y_train_mean if y_train_mean != 0 else 1):.4f}')
+        print(f'  test mae: {mean_absolute_error(y_test[:, i], y_test_pred[:, i]):.4f}')
+
+        # Scatter plot
+        plt.figure(figsize=(5, 5))
+        plt.scatter(y_test[:, i], y_test_pred[:, i], s=5, c='#e63946')
+        min_axis = np.min([y_test[:, i], y_test_pred[:, i]])
+        max_axis = np.max([y_test[:, i], y_test_pred[:, i]])
+        plt.plot([min_axis, max_axis], [min_axis, max_axis], c='black', linewidth=1)
+        plt.xlabel('Test values')
+        plt.ylabel('Predicted values')
+        plt.title(col + ' (NN)', fontweight='bold')
+        plt.tight_layout()
+        plt.savefig(f'./trained_models_plots/{col}_nn.jpg', dpi=200)
+        plt.show()
+        plt.close()
+
+        # Q-Q plot of standardized residuals
+        residuals = y_test_pred[:, i] - y_test[:, i]
+        standardised_residuals = (residuals - np.mean(residuals)) / (np.std(residuals) if np.std(residuals) != 0 else 1)
+        plt.figure(figsize=(5, 5))
+        sm.qqplot(standardised_residuals, line='45', color='#e63946')
+        plt.title(f'{col} - Q-Q plot (NN)', fontweight='bold')
+        plt.savefig(f'./trained_models_plots/{col}_residuals_nn.jpg', dpi=200)
+        plt.show()
+
 @tool
 def convert_name_to_smiles(name: str) -> str:
     """
@@ -464,3 +553,54 @@ def predict_properties(smiles: str) -> dict:
             'Explosion pressure': 150.0,
             'Explosion heat': 800.0
         }
+
+
+@tool
+def predict_properties_nn(smiles: str) -> dict:
+    """
+    Predicts the five energetic material properties using the neural network trained
+    on Coulomb matrix eigenvalue descriptors (length 64). Falls back to the legacy
+    per-target models if the NN artifacts are unavailable.
+    :param smiles: SMILES string representing the molecule to predict.
+    :return: Dictionary with predicted values for the 5 properties
+    """
+    property_list = ['Density', 'Detonation velocity', 'Explosion capacity', 'Explosion pressure', 'Explosion heat']
+    try:
+        # Create descriptor and ensure 2D shape
+        descriptor = np.array(create_descriptor(smiles))
+        if descriptor.ndim == 1:
+            descriptor = descriptor.reshape(1, -1)
+        elif descriptor.ndim > 2:
+            descriptor = descriptor.reshape(1, -1)
+
+        # Load shared scaler and NN model
+        with open('./trained_models/scaler_nn_multi.pkl', 'rb') as f:
+            scaler = pickle.load(f)
+        descriptor_scaled = scaler.transform(descriptor)
+
+        with open('./trained_models/nn_multi_output.pkl', 'rb') as f:
+            model = pickle.load(f)
+
+        y_pred = model.predict(descriptor_scaled)
+        # Ensure shape (1, 5)
+        if isinstance(y_pred, list):
+            y_pred = np.array(y_pred)
+        if y_pred.ndim == 1 and y_pred.shape[0] == 5:
+            y_pred = y_pred.reshape(1, -1)
+
+        result = {prop: float(y_pred[0, i]) for i, prop in enumerate(property_list)}
+        return result
+
+    except Exception as e:
+        # Fallback to legacy per-target predictors if available
+        try:
+            return predict_properties(smiles)
+        except Exception:
+            # Final fallback defaults
+            return {
+                'Density': 1.0,
+                'Detonation velocity': 5000.0,
+                'Explosion capacity': 0.5,
+                'Explosion pressure': 150.0,
+                'Explosion heat': 800.0
+            }

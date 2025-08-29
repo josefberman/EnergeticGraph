@@ -1069,30 +1069,9 @@ class MolecularOptimizationAgent:
                 print(f"  {os.path.basename(sample_path)} missing 'SMILES' column; skipping sample-based selection")
             return None
         property_columns = list(target_properties.keys())
-        # Reference SMILES for structural similarity (TNT)
-        ref_smiles_list = ['CC1=CC=C(C=C1)[N+](=O)[O-]']
-        # Collect candidates with property score and similarity
+        # Collect candidates with property score only (lower is better). Drop structural similarity.
         candidates: List[Dict[str, Any]] = []
         from rdkit import Chem as _Chem
-        from rdkit import DataStructs as _DataStructs
-        # Prefer new MorganGenerator to avoid deprecation warnings
-        try:
-            from rdkit.Chem import rdFingerprintGenerator as _FPGen
-            _morgan_gen = _FPGen.GetMorganGenerator(radius=2, fpSize=2048)
-        except Exception:
-            _morgan_gen = None
-            from rdkit.Chem import AllChem as _AllChem  # fallback
-        ref_fps = []
-        for r in ref_smiles_list:
-            try:
-                rm = _Chem.MolFromSmiles(r)
-                if rm is not None:
-                    if _morgan_gen is not None:
-                        ref_fps.append(_morgan_gen.GetFingerprint(rm))
-                    else:
-                        ref_fps.append(_AllChem.GetMorganFingerprintAsBitVect(rm, 2, nBits=2048))
-            except Exception:
-                continue
 
         for _, row in df.iterrows():
             smi = str(row[smiles_col]) if not pd.isna(row[smiles_col]) else ''
@@ -1122,35 +1101,16 @@ class MolecularOptimizationAgent:
                     continue
             except Exception:
                 pass
-            # Structural similarity to reference(s)
-            sim = 0.0
-            try:
-                m = _Chem.MolFromSmiles(smi)
-                if m is not None and ref_fps:
-                    if _morgan_gen is not None:
-                        fp = _morgan_gen.GetFingerprint(m)
-                    else:
-                        fp = _AllChem.GetMorganFingerprintAsBitVect(m, 2, nBits=2048)
-                    sim = max((_DataStructs.TanimotoSimilarity(fp, rfp) for rfp in ref_fps), default=0.0)
-            except Exception:
-                sim = 0.0
-            candidates.append({'smiles': smi, 'prop_score': prop_score, 'sim': sim})
+            # Only track score; do not compute or use similarity to TNT
+            candidates.append({'smiles': smi, 'prop_score': prop_score})
 
         if not candidates:
             return None
 
-        # Normalize property scores to [0,1] and combine with similarity (higher sim is better)
-        min_s = min(c['prop_score'] for c in candidates)
-        max_s = max(c['prop_score'] for c in candidates)
-        denom = (max_s - min_s) if (max_s - min_s) > 1e-12 else 1.0
-        alpha = 0.7  # weight for property fit; 0.3 for structural similarity
-        for c in candidates:
-            prop_norm = (c['prop_score'] - min_s) / denom
-            c['combined'] = alpha * prop_norm + (1 - alpha) * (1 - c['sim'])
-
-        best = min(candidates, key=lambda x: x['combined'])
+        # Choose the molecule with the lowest property score only
+        best = min(candidates, key=lambda x: x['prop_score'])
         if verbose:
-            print(f"  Using sample-based starting molecule from {os.path.basename(sample_path)}: {best['smiles']} (prop_score: {best['prop_score']:.4f}, sim: {best['sim']:.3f})")
+            print(f"  Using sample-based starting molecule from {os.path.basename(sample_path)}: {best['smiles']} (prop_score: {best['prop_score']:.4f})")
         return best['smiles']
     
     def _find_starting_molecule_with_rag(self, target_properties: Dict[str, float], verbose: bool = True) -> Optional[str]:

@@ -1,5 +1,7 @@
 from typing import Dict, Any, List
 import os
+# Ensure Transformers does not try to import TensorFlow/Keras (avoids Keras 3 error)
+os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
 import threading
 import time
 import base64
@@ -55,7 +57,7 @@ def background_run(csv_path: str, use_rag: bool, beam_width: int, max_iterations
         result_holder['results'] = {'error': str(e)}
 
 
-def show_best(results: Dict[str, Any]):
+def show_best(results: Dict[str, Any], metric: str = 'mape'):
     start_smiles = results.get('starting_molecule', '')
     best_smiles = results.get('best_molecule', '')
     target_props = results.get('target_properties', {})
@@ -90,8 +92,13 @@ def show_best(results: Dict[str, Any]):
         else:
             st.info('No properties')
 
+    # Show best score summary
+    best_score = results.get('best_score', None)
+    if isinstance(best_score, (int, float)):
+        st.markdown(f"**Best score ({str(metric).upper()}):** `{best_score:.6f}`")
 
-def show_history(results: Dict[str, Any]):
+
+def show_history(results: Dict[str, Any], metric: str = 'mape'):
     st.subheader('Beam Search (per iteration; scores are MAPE)')
     history: List[Dict[str, Any]] = results.get('search_history', []) or []
     if not history:
@@ -110,8 +117,8 @@ def show_history(results: Dict[str, Any]):
                     if png:
                         st.image(png, use_container_width=True)
                     st.caption(f'SMILES: {smiles[:80]}{"..." if len(smiles) > 80 else ""}')
-                    if score is not None:
-                        st.markdown(f'*Score (MAPE):* `{score:.4f}`')
+                    if isinstance(score, (int, float)):
+                        st.markdown(f"*Score ({str(metric).upper()}):* `{score:.6f}`")
 
 
 def main():
@@ -216,9 +223,9 @@ def main():
     if results and 'error' in results:
         st.error(f"Error: {results['error']}")
     elif results and not st.session_state.running:
-        show_best(results)
+        show_best(results, metric=str(metric).lower() if 'metric' in locals() else 'mape')
         st.divider()
-        show_history(results)
+        show_history(results, metric=str(metric).lower() if 'metric' in locals() else 'mape')
 
 
 if __name__ == '__main__':
