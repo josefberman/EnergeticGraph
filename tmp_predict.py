@@ -1,6 +1,6 @@
 from prediction import predict_properties
 
-SMILES_TNEB = "O=[N+]([O-])c1cc(cc([N+]([O-])=O)c1O)[N+]([O-])=O"
+SMILES_TNEB = "COc1c([N+](=O)[O-])cc([N+](=O)[O-])cc1[N+](=O)[O-]"
 
 props = predict_properties.invoke(SMILES_TNEB)
 order = [

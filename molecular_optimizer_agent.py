@@ -22,6 +22,7 @@ from molecular_tools import (
 from RAG import retrieve_context
 import os
 from dotenv import load_dotenv
+import math
 import json
 from dataclasses import dataclass
 
@@ -45,6 +46,7 @@ class OptimizationState:
     beam_width: int
     best_score: float
     best_molecule: str
+    best_gibbs: Optional[float]
     search_history: List[Dict[str, Any]]
     convergence_threshold: float
     verbose: bool
@@ -52,7 +54,7 @@ class OptimizationState:
 class MolecularOptimizationAgent:
     """Enhanced molecular optimization agent using LangGraph"""
     
-    def __init__(self, beam_width: int = 5, max_iterations: int = 10, convergence_threshold: float = 0.01, use_rag: bool = True, early_stop_patience: int | None = 3, proceed_k: int = 3, error_metric: str = 'mape'):
+    def __init__(self, beam_width: int = 5, max_iterations: int = 10, convergence_threshold: float = 0.01, use_rag: bool = True, early_stop_patience: int | None = 3, proceed_k: int = 3, error_metric: str = 'mape', feasibility_weight: float = 0.3):
         self.beam_width = beam_width
         self.max_iterations = max_iterations
         self.convergence_threshold = convergence_threshold
@@ -60,6 +62,12 @@ class MolecularOptimizationAgent:
         self.early_stop_patience = early_stop_patience
         self.proceed_k = proceed_k
         self.error_metric = (error_metric or 'mape').lower()
+        # Weight for feasibility in combined score: score = (1-w)*prop_error + w*(1-feas)
+        try:
+            w = float(feasibility_weight)
+        except Exception:
+            w = 0.3
+        self.feasibility_weight = max(0.0, min(1.0, w))
         
         # Initialize the LLM with all available tools
         self.model = ChatOpenAI(model='gpt-4o', temperature=0).bind_tools([
@@ -105,6 +113,208 @@ class MolecularOptimizationAgent:
         workflow.add_edge('tools', 'agent')
         
         return workflow
+
+    # ---------- Feasibility scoring (replaces Gibbs usage)
+    @dataclass
+    class FeasibilityReport:
+        sa_score: float
+        alerts: int
+        mmff_strain_min: float
+        mmff_strain_p95: float
+        mmff_strain_score_0_1: float
+        ip_kcal: float
+        ea_kcal: float
+        hardness_kcal: float
+        electrophilicity_kcal: float
+        min_bde_kcal: float
+        logp: float
+        tpsa: float
+        small_ring_count: int
+        rot_bonds: int
+        composite_score_0_1: float
+
+    def _smiles_to_mol_3d(self, smiles: str, n_confs: int = 8):
+        from rdkit import Chem as _Chem
+        from rdkit.Chem import AllChem as _AllChem
+        m0 = _Chem.MolFromSmiles(smiles)
+        if m0 is None:
+            raise ValueError("Bad SMILES")
+        mol = _Chem.AddHs(m0)
+        params = _AllChem.ETKDGv3()
+        params.pruneRmsThresh = 0.5
+        cids = _AllChem.EmbedMultipleConfs(mol, numConfs=n_confs, params=params)
+        _AllChem.MMFFOptimizeMoleculeConfs(mol, mmffVariant="MMFF94s")
+        return mol, list(cids)
+
+    def _molconf_to_ase_atoms(self, mol, cid: int):
+        from ase import Atoms as _Atoms
+        conf = mol.GetConformer(cid)
+        symbols = [a.GetSymbol() for a in mol.GetAtoms()]
+        coords = conf.GetPositions()
+        return _Atoms(symbols=symbols, positions=coords)
+
+    def _mmff_strain_kcal(self, mol, cids):
+        from rdkit.Chem import AllChem as _AllChem
+        import numpy as _np
+        res = _AllChem.MMFFOptimizeMoleculeConfs(mol, mmffVariant="MMFF94s")
+        energies = {cid: e[1] for cid, e in zip(cids, res)}
+        e0 = min(energies.values()) if energies else 0.0
+        return {cid: energies[cid] - e0 for cid in cids}
+
+    def _ersatz_sa_score(self, mol) -> float:
+        from rdkit.Chem import rdMolDescriptors as _rdd
+        rings = _rdd.CalcNumRings(mol)
+        spiro = _rdd.CalcNumSpiroAtoms(mol)
+        bridged = _rdd.CalcNumBridgeheadAtoms(mol)
+        size = mol.GetNumAtoms()
+        heteros = sum(1 for a in mol.GetAtoms() if a.GetAtomicNum() not in (1, 6))
+        return min(10.0, 1.5 + 0.03 * size + 0.6 * rings + 0.8 * spiro + 0.8 * bridged + 0.2 * heteros)
+
+    def _count_alerts(self, mol) -> int:
+        from rdkit.Chem.FilterCatalog import FilterCatalog, FilterCatalogParams
+        try:
+            params = FilterCatalogParams()
+            params.AddCatalog(FilterCatalogParams.FilterCatalogs.PAINS)
+            params.AddCatalog(FilterCatalogParams.FilterCatalogs.BRENK)
+            fc = FilterCatalog(params)
+            return sum(1 for _ in fc.GetMatches(mol))
+        except Exception:
+            return 0
+
+    def _xtb_single_point_kcal(self, atoms, charge=0, uhf=0) -> float:
+        from tblite.ase import TBLite as _TBLite
+        EV2KCAL = 23.060549
+        calc = _TBLite(method="GFN2-xTB", charge=charge, uhf=uhf)
+        atoms.calc = calc
+        e_eV = atoms.get_potential_energy()
+        return float(e_eV * EV2KCAL)
+
+    def _ip_ea_kcal(self, atoms):
+        E0 = self._xtb_single_point_kcal(atoms, charge=0, uhf=0)
+        Ec = self._xtb_single_point_kcal(atoms, charge=+1, uhf=1)
+        Ea = self._xtb_single_point_kcal(atoms, charge=-1, uhf=1)
+        IP = Ec - E0
+        EA = E0 - Ea
+        return IP, EA
+
+    def _hardness_electrophilicity(self, IP_kcal: float, EA_kcal: float):
+        mu = -(IP_kcal + EA_kcal) / 2.0
+        eta = max(1e-6, (IP_kcal - EA_kcal) / 2.0)
+        omega = (mu * mu) / (2.0 * eta)
+        return mu, eta, omega
+
+    def _candidate_bonds(self, mol):
+        from rdkit import Chem as _Chem
+        bonds = []
+        for b in mol.GetBonds():
+            if b.GetBondType() != _Chem.BondType.SINGLE:
+                continue
+            a1, a2 = b.GetBeginAtom(), b.GetEndAtom()
+            if a1.GetAtomicNum() == 1 or a2.GetAtomicNum() == 1:
+                continue
+            bonds.append((a1.GetIdx(), a2.GetIdx()))
+        return bonds
+
+    def _bde_vertical_kcal(self, mol, atoms, bond):
+        from rdkit import Chem as _Chem
+        from rdkit.Chem import AllChem as _AllChem
+        from ase import Atoms as _Atoms
+        i, j = bond
+        if not mol.GetBondBetweenAtoms(i, j):
+            return float('inf')
+        emol = _Chem.EditableMol(_Chem.RemoveHs(mol))
+        emol.RemoveBond(i, j)
+        frag = emol.GetMol()
+        frags = _Chem.GetMolFrags(frag, asMols=True, sanitizeFrags=True)
+        if len(frags) != 2:
+            return float('inf')
+        fragsH = [_Chem.AddHs(f) for f in frags]
+        frag_atoms = []
+        for f in fragsH:
+            try:
+                _AllChem.EmbedMolecule(f, _AllChem.ETKDGv3())
+                _AllChem.MMFFOptimizeMolecule(f, mmffVariant="MMFF94s")
+            except Exception:
+                pass
+            conf = f.GetConformer()
+            sym = [a.GetSymbol() for a in f.GetAtoms()]
+            pos = conf.GetPositions()
+            frag_atoms.append(_Atoms(symbols=sym, positions=pos))
+        E_AB = self._xtb_single_point_kcal(atoms, charge=0, uhf=0)
+        E_rad_sum = sum(self._xtb_single_point_kcal(a, charge=0, uhf=1) for a in frag_atoms)
+        return E_rad_sum - E_AB
+
+    def _feasibility_from_smiles(self, smiles: str, temperature_k: float = 298.15, n_confs: int = 8):
+        from rdkit.Chem import Descriptors as _Descriptors
+        from rdkit.Chem import Crippen as _Crippen
+        from rdkit.Chem import rdMolDescriptors as _rdd
+        import numpy as _np
+        try:
+            mol, cids = self._smiles_to_mol_3d(smiles, n_confs)
+        except Exception:
+            return None
+        sa = self._ersatz_sa_score(mol)
+        alerts = self._count_alerts(mol)
+        logp = _Crippen.MolLogP(mol)
+        tpsa = _rdd.CalcTPSA(mol)
+        ring_info = mol.GetRingInfo()
+        small_rings = sum(1 for r in ring_info.AtomRings() if len(r) in (3, 4))
+        rotb = _Descriptors.NumRotatableBonds(mol)
+        strain = self._mmff_strain_kcal(mol, cids)
+        strains = [strain[c] for c in cids] if cids else [0.0]
+        strain_min = float(min(strains))
+        strain_p95 = float(_np.percentile(strains, 95)) if len(strains) > 1 else strain_min
+        try:
+            atoms0 = self._molconf_to_ase_atoms(mol, cids[0] if cids else mol.GetConformer().GetId())
+        except Exception:
+            atoms0 = None
+        IP, EA = 0.0, 0.0
+        if atoms0 is not None:
+            try:
+                IP, EA = self._ip_ea_kcal(atoms0)
+            except Exception:
+                IP, EA = 0.0, 0.0
+        mu, eta, omega = self._hardness_electrophilicity(IP, EA)
+        bonds = self._candidate_bonds(mol)[:8]
+        min_bde = float('inf')
+        if atoms0 is not None:
+            for b in bonds:
+                try:
+                    bde = self._bde_vertical_kcal(mol, atoms0, b)
+                    if bde < min_bde:
+                        min_bde = bde
+                except Exception:
+                    continue
+        if min_bde == float('inf'):
+            min_bde = 0.0
+        s = 1.0
+        s -= 0.06 * max(0, sa - 3.0)
+        s -= 0.15 * min(alerts, 2)
+        s -= 0.02 * max(0.0, strain_p95 - 2.0)
+        s -= 0.04 * max(0.0, (5.0 - min_bde) / 5.0)
+        s -= 0.02 * small_rings
+        s -= 0.01 * max(0, rotb - 8)
+        s += 0.005 * min(20.0, eta) / 10.0
+        s = max(0.0, min(1.0, s))
+        # MMFF-only feasibility (0..1) from strain (use same baseline and slope as composite penalty)
+        strain_only_feas = max(0.0, min(1.0, 1.0 - 0.02 * max(0.0, strain_p95 - 2.0)))
+        return self.FeasibilityReport(
+            sa_score=round(sa, 2),
+            alerts=int(alerts),
+            mmff_strain_min=round(strain_min, 2),
+            mmff_strain_p95=round(strain_p95, 2),
+            mmff_strain_score_0_1=round(strain_only_feas, 3),
+            ip_kcal=round(IP, 2),
+            ea_kcal=round(EA, 2),
+            hardness_kcal=round(eta, 2),
+            electrophilicity_kcal=round(omega, 2),
+            min_bde_kcal=round(min_bde, 2),
+            logp=round(logp, 2),
+            tpsa=round(tpsa, 2),
+            small_ring_count=int(small_rings),
+            rot_bonds=int(rotb),
+            composite_score_0_1=round(s, 3),
+        )
     
     def calculate_fitness_score(self, properties: Dict[str, float], target_properties: Dict[str, float], 
                                weights: Dict[str, float]) -> float:
@@ -129,6 +339,24 @@ class MolecularOptimizationAgent:
                 total_weight += weight
         
         return (weighted_sum / total_weight) if total_weight > 0 else weighted_sum
+
+    def calculate_combined_score(self, property_error: float, feasibility: Optional['MolecularOptimizationAgent.FeasibilityReport']) -> float:
+        """Combine property error with feasibility (higher feasibility improves score). Lower is better."""
+        feas = (
+            float(getattr(feasibility, 'mmff_strain_score_0_1', getattr(feasibility, 'composite_score_0_1', 0.0)))
+            if feasibility is not None else 0.0
+        )
+        w = self.feasibility_weight
+        # Combined: minimize error while rewarding higher feasibility
+        return (1.0 - w) * float(property_error) + w * (1.0 - feas)
+
+    def _feasibility_to_public_dict(self, feas: Optional['MolecularOptimizationAgent.FeasibilityReport']) -> Optional[Dict[str, Any]]:
+        """Return feasibility fields for reporting, excluding composite_score_0_1."""
+        if feas is None:
+            return None
+        d = dict(feas.__dict__)
+        d.pop('composite_score_0_1', None)
+        return d
     
     def run_beam_search_optimization(self, starting_molecule: str, target_properties: Dict[str, float], 
                                    weights: Dict[str, float], verbose: bool = True, cancel_event: Any = None) -> Dict[str, Any]:
@@ -145,6 +373,7 @@ class MolecularOptimizationAgent:
             beam_width=self.beam_width,
             best_score=0.0,
             best_molecule=starting_molecule,
+            best_gibbs=None,
             search_history=[],
             convergence_threshold=self.convergence_threshold,
             verbose=verbose
@@ -163,7 +392,9 @@ class MolecularOptimizationAgent:
         
         # Get initial molecule properties
         initial_properties = predict_properties.invoke(starting_molecule)
-        initial_score = self.calculate_fitness_score(initial_properties, target_properties, weights)
+        initial_prop_error = self.calculate_fitness_score(initial_properties, target_properties, weights)
+        initial_feas = self._feasibility_from_smiles(starting_molecule)
+        initial_score = self.calculate_combined_score(initial_prop_error, initial_feas)
         state.best_score = initial_score
         
         if verbose:
@@ -177,6 +408,9 @@ class MolecularOptimizationAgent:
             'smiles': starting_molecule,
             'properties': initial_properties,
             'score': initial_score,
+            'prop_error': initial_prop_error,
+            'feasibility': self._feasibility_to_public_dict(initial_feas),
+            'feasibility_score': float(getattr(initial_feas, 'mmff_strain_score_0_1', getattr(initial_feas, 'composite_score_0_1', 0.0))) if initial_feas else 0.0,
             'parent': None,
             'modification': 'Initial molecule',
             'iteration': 0
@@ -228,6 +462,10 @@ class MolecularOptimizationAgent:
                     modified_smiles = modification.get('smiles')
                     if not modified_smiles or modified_smiles in visited_smiles:
                         continue
+                    if '.' in modified_smiles:
+                        if verbose:
+                            print("    -> Skipping multi-component SMILES candidate")
+                        continue
                     # Validate and score
                     validation = validate_molecule_structure.invoke(modified_smiles)
                     if not validation.get('valid', False):
@@ -235,11 +473,16 @@ class MolecularOptimizationAgent:
                             print(f"    -> Invalid modification: {validation.get('error', 'Unknown error')}")
                         continue
                     properties = predict_properties.invoke(modified_smiles)
-                    score = self.calculate_fitness_score(properties, target_properties, weights)
+                    prop_error = self.calculate_fitness_score(properties, target_properties, weights)
+                    feas = self._feasibility_from_smiles(modified_smiles)
+                    score = self.calculate_combined_score(prop_error, feas)
                     parent_candidates.append({
                         'smiles': modified_smiles,
                         'properties': properties,
                         'score': score,
+                        'prop_error': prop_error,
+                        'feasibility': self._feasibility_to_public_dict(feas),
+                        'feasibility_score': float(getattr(feas, 'mmff_strain_score_0_1', getattr(feas, 'composite_score_0_1', 0.0))) if feas else 0.0,
                         'parent': candidate['smiles'],
                         'modification': modification.get('description', 'Unknown modification'),
                         'iteration': iteration + 1,
@@ -256,11 +499,15 @@ class MolecularOptimizationAgent:
                         mod_smiles = mod.get('modified_smiles') or mod.get('smiles')
                         if not mod_smiles or mod_smiles in visited_smiles:
                             continue
+                        if '.' in mod_smiles:
+                            continue
                         validation = validate_molecule_structure.invoke(mod_smiles)
                         if not validation.get('valid', False):
                             continue
                         properties = predict_properties.invoke(mod_smiles)
-                        score = self.calculate_fitness_score(properties, target_properties, weights)
+                        prop_error = self.calculate_fitness_score(properties, target_properties, weights)
+                        feas = self._feasibility_from_smiles(mod_smiles)
+                        score = self.calculate_combined_score(prop_error, feas)
                         # Deduplicate within parent_candidates
                         if any(pc['smiles'] == mod_smiles for pc in parent_candidates):
                             continue
@@ -268,13 +515,19 @@ class MolecularOptimizationAgent:
                             'smiles': mod_smiles,
                             'properties': properties,
                             'score': score,
+                            'prop_error': prop_error,
+                            'feasibility': self._feasibility_to_public_dict(feas),
+                            'feasibility_score': float(getattr(feas, 'mmff_strain_score_0_1', getattr(feas, 'composite_score_0_1', 0.0))) if feas else 0.0,
                             'parent': candidate['smiles'],
                             'modification': mod.get('description', 'Generated modification'),
                             'iteration': iteration + 1,
                             'validation': validation
                         })
                 # Select up to beam_width (minimize overall MSE)
-                parent_candidates.sort(key=lambda x: x['score'])
+                def _pc_key(c: Dict[str, Any]):
+                    # Primary sort by combined score (lower better)
+                    return (float(c.get('score', 1e12)),)
+                parent_candidates.sort(key=_pc_key)
                 selected_children = parent_candidates[:min(self.beam_width, len(parent_candidates))]
                 for child in selected_children:
                     child['id'] = next_id
@@ -282,8 +535,11 @@ class MolecularOptimizationAgent:
                     all_candidates.append(child)
                     visited_smiles.add(child['smiles'])
                     if verbose:
-                        print(f"    -> SMILES: {child['smiles']} | modification: {child['modification']} | score (MAPE): {child['score']:.4f}")
-                    # Update best (minimize overall MSE)
+                        # Verbose both components
+                        pe = float(child.get('prop_error', float('nan')))
+                        fs = float(child.get('feasibility_score', 0.0))
+                        print(f"    -> SMILES: {child['smiles']} | modification: {child['modification']} | score (combined): {child['score']:.4f} | prop_err: {pe:.4f} | feas: {fs:.3f}")
+                    # Update best (minimize combined)
                     if child['score'] < state.best_score:
                         state.best_score = child['score']
                         state.best_molecule = child['smiles']
@@ -308,15 +564,22 @@ class MolecularOptimizationAgent:
                         mod_smiles = mod.get('modified_smiles') or mod.get('smiles')
                         if not mod_smiles or mod_smiles in existing_smiles:
                             continue
+                        if '.' in mod_smiles:
+                            continue
                         validation = validate_molecule_structure.invoke(mod_smiles)
                         if not validation.get('valid', False):
                             continue
                         properties = predict_properties.invoke(mod_smiles)
-                        score = self.calculate_fitness_score(properties, target_properties, weights)
+                        prop_error = self.calculate_fitness_score(properties, target_properties, weights)
+                        feas = self._feasibility_from_smiles(mod_smiles)
+                        score = self.calculate_combined_score(prop_error, feas)
                         child = {
                             'smiles': mod_smiles,
                             'properties': properties,
                             'score': score,
+                            'prop_error': prop_error,
+                            'feasibility': self._feasibility_to_public_dict(feas),
+                            'feasibility_score': float(getattr(feas, 'mmff_strain_score_0_1', getattr(feas, 'composite_score_0_1', 0.0))) if feas else 0.0,
                             'parent': parent['smiles'],
                             'modification': mod.get('description', 'Generated modification'),
                             'iteration': iteration + 1,
@@ -348,6 +611,8 @@ class MolecularOptimizationAgent:
                         mod_smiles = mod.get('modified_smiles') or mod.get('smiles')
                         if not mod_smiles or mod_smiles in visited_smiles:
                             continue
+                        if '.' in mod_smiles:
+                            continue
                         try:
                             mol_ok = _Chem.MolFromSmiles(mod_smiles) is not None
                         except Exception:
@@ -356,11 +621,16 @@ class MolecularOptimizationAgent:
                             continue
                         # Compute properties without strict structural validation
                         properties = predict_properties.invoke(mod_smiles)
-                        score = self.calculate_fitness_score(properties, target_properties, weights)
+                        prop_error = self.calculate_fitness_score(properties, target_properties, weights)
+                        feas = self._feasibility_from_smiles(mod_smiles)
+                        score = self.calculate_combined_score(prop_error, feas)
                         child = {
                             'smiles': mod_smiles,
                             'properties': properties,
                             'score': score,
+                            'prop_error': prop_error,
+                            'feasibility': self._feasibility_to_public_dict(feas),
+                            'feasibility_score': float(getattr(feas, 'mmff_strain_score_0_1', getattr(feas, 'composite_score_0_1', 0.0))) if feas else 0.0,
                             'parent': parent['smiles'],
                             'modification': mod.get('description', 'Exhaustive fallback modification'),
                             'iteration': iteration + 1,
@@ -383,11 +653,16 @@ class MolecularOptimizationAgent:
                             simple = None
                         if simple and simple not in visited_smiles:
                             properties = predict_properties.invoke(simple)
-                            score = self.calculate_fitness_score(properties, target_properties, weights)
+                            prop_error = self.calculate_fitness_score(properties, target_properties, weights)
+                            feas = self._feasibility_from_smiles(simple)
+                            score = self.calculate_combined_score(prop_error, feas)
                             child = {
                                 'smiles': simple,
                                 'properties': properties,
                                 'score': score,
+                                'prop_error': prop_error,
+                                'feasibility': self._feasibility_to_public_dict(feas),
+                                'feasibility_score': float(getattr(feas, 'mmff_strain_score_0_1', getattr(feas, 'composite_score_0_1', 0.0))) if feas else 0.0,
                                 'parent': parent['smiles'],
                                 'modification': 'Simple hydrogen substitution (fallback)',
                                 'iteration': iteration + 1,
@@ -402,8 +677,10 @@ class MolecularOptimizationAgent:
                             if len(all_candidates) >= self.proceed_k:
                                 break
             
-            # Select top candidates for next beam (minimize overall MAPE)
-            all_candidates.sort(key=lambda x: x['score'])
+            # Select top candidates for next beam (minimize combined score)
+            def _beam_key(c: Dict[str, Any]):
+                return (float(c.get('score', 1e12)),)
+            all_candidates.sort(key=_beam_key)
             beam = all_candidates[:self.proceed_k]
             if verbose and len(beam) > 0:
                 print(f"  Progressing to next iteration with IDs: {[c.get('id','?') for c in beam]}")
@@ -444,12 +721,32 @@ class MolecularOptimizationAgent:
                 raise RuntimeError("No valid modifications found to proceed to next iteration")
         
         # Prepare final results
+        # Collect best candidate extra metrics for display
+        try:
+            best_entry = None
+            for entry in state.search_history[::-1]:
+                for cand in entry.get('candidates', []):
+                    if cand.get('smiles') == state.best_molecule:
+                        best_entry = cand
+                        break
+                if best_entry:
+                    break
+            best_prop_error = float(best_entry.get('prop_error')) if best_entry and 'prop_error' in best_entry else None
+            best_feasibility_score = float(best_entry.get('feasibility_score')) if best_entry and 'feasibility_score' in best_entry else None
+        except Exception:
+            best_prop_error = None
+            best_feasibility_score = None
+
         results = {
             'starting_molecule': starting_molecule,
             'target_properties': target_properties,
             'weights': weights,
             'best_molecule': state.best_molecule,
             'best_score': state.best_score,
+            # keep key for backward-compatibility but now None
+            'best_gibbs_kcal_mol': None,
+            'best_prop_error': best_prop_error,
+            'best_feasibility_score': best_feasibility_score,
             'best_properties': predict_properties.invoke(state.best_molecule) if state.best_molecule != starting_molecule else initial_properties,
             'total_iterations': iteration + 1,
             'search_history': state.search_history,
@@ -948,6 +1245,9 @@ class MolecularOptimizationAgent:
                     cand = cand.strip().strip('.,;:')
                     if not cand or cand == smiles:
                         continue
+                    # Skip multi-component suggestions
+                    if '.' in cand:
+                        continue
                     if not re.search(r'(C|N|O|S|P|F|Cl|Br|I|c|n|o|s)', cand):
                         continue
                     try:
@@ -984,7 +1284,7 @@ class MolecularOptimizationAgent:
         except Exception as e:
             raise RuntimeError(f"Error generating modifications with agent: {e}")
     
-    def process_csv_input(self, csv_file_path: str, verbose: bool = True, cancel_event: Any = None) -> Dict[str, Any]:
+    def process_csv_input(self, csv_file_path: str, verbose: bool = True, cancel_event: Any = None, starting_smiles: Optional[str] = None, prefer_user_start: bool = False) -> Dict[str, Any]:
         """Process CSV input and run optimization without starting molecule"""
         
         # Read CSV file
@@ -1013,27 +1313,31 @@ class MolecularOptimizationAgent:
         if not target_properties:
             return {"error": "No target properties found in CSV"}
         
-        # Determine starting molecule based on RAG flag
-        if self.use_rag:
-            starting_molecule = self._find_starting_molecule_with_rag(target_properties, verbose)
-            # If RAG fails, try sample CSV based selection before erroring out
-            if not starting_molecule:
-                try:
-                    sample_based = self._find_starting_molecule_from_samples(target_properties, weights, verbose)
-                except Exception:
-                    sample_based = None
-                if sample_based:
-                    starting_molecule = sample_based
-                else:
-                    return {"error": "Could not find suitable starting molecule using RAG"}
+        # Determine starting molecule based on user preference or samples
+        starting_molecule: Optional[str] = None
+        if prefer_user_start and starting_smiles:
+            if '.' in starting_smiles:
+                return {"error": "Starting SMILES contains multiple components ('.'); provide a single-molecule SMILES."}
+            try:
+                mol = Chem.MolFromSmiles(starting_smiles)
+            except Exception:
+                mol = None
+            if mol is None:
+                return {"error": "Invalid starting SMILES"}
+            try:
+                validation = validate_molecule_structure.invoke(starting_smiles)
+            except Exception:
+                validation = {"valid": True}
+            if not validation.get('valid', False):
+                return {"error": f"Starting SMILES failed validation: {validation.get('error','invalid structure')}"}
+            starting_molecule = starting_smiles
         else:
-            # RAG disabled: try sample CSV based selection; fallback to TNT
+            # Choose from samples (preferred path per user request); fallback to TNT
             try:
                 starting_molecule = self._find_starting_molecule_from_samples(target_properties, weights, verbose)
             except Exception:
                 starting_molecule = None
             if not starting_molecule:
-                # fallback to TNT
                 starting_molecule = 'Cc1c(cc(cc1[N+](=O)[O-])[N+](=O)[O-])[N+](=O)[O-]'
         
         # Run optimization

@@ -39,7 +39,7 @@ def ensure_session_state():
             st.session_state[k] = v
 
 
-def background_run(csv_path: str, use_rag: bool, beam_width: int, max_iterations: int, proceed_k: int, result_holder: dict, cancel_event: threading.Event | None, error_metric: str = 'mape'):
+def background_run(csv_path: str, use_rag: bool, beam_width: int, max_iterations: int, proceed_k: int, result_holder: dict, cancel_event: threading.Event | None, error_metric: str = 'mape', prefer_user_start: bool = False, starting_smiles: str | None = None):
     # Pure background execution: no Streamlit API here
     try:
         agent = MolecularOptimizationAgent(
@@ -51,7 +51,7 @@ def background_run(csv_path: str, use_rag: bool, beam_width: int, max_iterations
             proceed_k=proceed_k,
             error_metric=error_metric,
         )
-        results = agent.process_csv_input(csv_path, verbose=False, cancel_event=cancel_event)
+        results = agent.process_csv_input(csv_path, verbose=False, cancel_event=cancel_event, starting_smiles=starting_smiles if starting_smiles else None, prefer_user_start=bool(prefer_user_start))
         result_holder['results'] = results
     except Exception as e:
         result_holder['results'] = {'error': str(e)}
@@ -92,14 +92,26 @@ def show_best(results: Dict[str, Any], metric: str = 'mape'):
         else:
             st.info('No properties')
 
-    # Show best score summary
+    # Show best score summary and components
     best_score = results.get('best_score', None)
-    if isinstance(best_score, (int, float)):
-        st.markdown(f"**Best score ({str(metric).upper()}):** `{best_score:.6f}`")
+    best_prop_error = results.get('best_prop_error', None)
+    best_feas = results.get('best_feasibility_score', None)
+    cols = st.columns(2)
+    with cols[0]:
+        if isinstance(best_score, (int, float)):
+            st.markdown(f"**Best score ({str(metric).upper()}):** `{best_score:.6f}`")
+    with cols[1]:
+        lines = []
+        if isinstance(best_prop_error, (int, float)):
+            lines.append(f"prop_err: `{best_prop_error:.6f}`")
+        if isinstance(best_feas, (int, float)):
+            lines.append(f"feas: `{best_feas:.3f}`")
+        if lines:
+            st.markdown("**Components:** " + " | ".join(lines))
 
 
 def show_history(results: Dict[str, Any], metric: str = 'mape'):
-    st.subheader('Beam Search (per iteration; scores are MAPE)')
+    st.subheader('Beam Search (per iteration; scores are combined)')
     history: List[Dict[str, Any]] = results.get('search_history', []) or []
     if not history:
         st.info('No search history available')
@@ -115,10 +127,16 @@ def show_history(results: Dict[str, Any], metric: str = 'mape'):
                 png = smiles_to_png_bytes(smiles)
                 with cols[idx % 3]:
                     if png:
-                        st.image(png, use_container_width=True)
+                        st.image(png, width='stretch')
                     st.caption(f'SMILES: {smiles[:80]}{"..." if len(smiles) > 80 else ""}')
                     if isinstance(score, (int, float)):
-                        st.markdown(f"*Score ({str(metric).upper()}):* `{score:.6f}`")
+                        st.markdown(f"*Score (combined):* `{score:.6f}`")
+                    feas = c.get('feasibility') or {}
+                    if isinstance(feas, dict) and 'composite_score_0_1' in feas:
+                        st.markdown(f"*Feasibility (0-1):* `{float(feas['composite_score_0_1']):.3f}`")
+                    pe = c.get('prop_error')
+                    if isinstance(pe, (int, float)):
+                        st.markdown(f"*Property error ({str(metric).upper()}):* `{pe:.6f}`")
 
 
 def main():
@@ -144,9 +162,17 @@ def main():
         max_iterations = st.number_input('Max iterations', value=8, min_value=1, max_value=100, step=1)
         proceed_k = st.number_input('Proceeding candidates (k)', value=3, min_value=1, max_value=30, step=1)
 
-        run_btn = st.button('Run Optimization', type='primary', use_container_width=True, disabled=st.session_state.running)
-        stop_btn = st.button('Stop', use_container_width=True)
-        reset_btn = st.button('Reset', use_container_width=True)
+        st.markdown('---')
+        start_mode = st.radio('Starting molecule', options=['From samples', 'Provide SMILES'], index=0, horizontal=False)
+        user_smiles = ''
+        prefer_user_start = False
+        if start_mode == 'Provide SMILES':
+            user_smiles = st.text_input('Starting SMILES', value='', placeholder='e.g., CC1=CC=C(C=C1)[N+](=O)[O-]')
+            prefer_user_start = True
+
+        run_btn = st.button('Run Optimization', type='primary', width='stretch', disabled=st.session_state.running)
+        stop_btn = st.button('Stop', width='stretch')
+        reset_btn = st.button('Reset', width='stretch')
 
     # Poll worker status first
     if st.session_state.running and st.session_state.worker:
@@ -168,7 +194,7 @@ def main():
             st.session_state.result_holder = {}
             worker = threading.Thread(
                 target=background_run,
-                args=(csv_path, use_rag, int(beam_width), int(max_iterations), int(proceed_k), st.session_state.result_holder, st.session_state.cancel_event, str(metric).lower()),
+                args=(csv_path, use_rag, int(beam_width), int(max_iterations), int(proceed_k), st.session_state.result_holder, st.session_state.cancel_event, str(metric).lower(), bool(prefer_user_start), str(user_smiles).strip() if prefer_user_start and user_smiles else None),
                 daemon=True,
             )
             st.session_state.worker = worker
