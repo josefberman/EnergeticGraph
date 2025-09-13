@@ -111,7 +111,7 @@ def show_best(results: Dict[str, Any], metric: str = 'mape'):
 
 
 def show_history(results: Dict[str, Any], metric: str = 'mape'):
-    st.subheader('Beam Search (per iteration; scores are combined)')
+    st.subheader('Beam Search (per iteration; error is MAPE/MSE, feasibility filtered)')
     history: List[Dict[str, Any]] = results.get('search_history', []) or []
     if not history:
         st.info('No search history available')
@@ -129,14 +129,19 @@ def show_history(results: Dict[str, Any], metric: str = 'mape'):
                     if png:
                         st.image(png, width='stretch')
                     st.caption(f'SMILES: {smiles[:80]}{"..." if len(smiles) > 80 else ""}')
-                    if isinstance(score, (int, float)):
-                        st.markdown(f"*Score (combined):* `{score:.6f}`")
                     feas = c.get('feasibility') or {}
                     if isinstance(feas, dict) and 'composite_score_0_1' in feas:
                         st.markdown(f"*Feasibility (0-1):* `{float(feas['composite_score_0_1']):.3f}`")
                     pe = c.get('prop_error')
                     if isinstance(pe, (int, float)):
-                        st.markdown(f"*Property error ({str(metric).upper()}):* `{pe:.6f}`")
+                        st.markdown(f"*Error ({str(metric).upper()}):* `{pe:.6f}`")
+                    props = c.get('properties') or {}
+                    if isinstance(props, dict) and props:
+                        try:
+                            st.markdown('*Predicted properties:*')
+                            st.table({k: [v] for k, v in props.items()})
+                        except Exception:
+                            pass
 
 
 def main():

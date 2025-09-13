@@ -54,7 +54,7 @@ class OptimizationState:
 class MolecularOptimizationAgent:
     """Enhanced molecular optimization agent using LangGraph"""
     
-    def __init__(self, beam_width: int = 5, max_iterations: int = 10, convergence_threshold: float = 0.01, use_rag: bool = True, early_stop_patience: int | None = 3, proceed_k: int = 3, error_metric: str = 'mape', feasibility_weight: float = 0.3):
+    def __init__(self, beam_width: int = 5, max_iterations: int = 10, convergence_threshold: float = 0.01, use_rag: bool = True, early_stop_patience: int | None = 3, proceed_k: int = 3, error_metric: str = 'mape', feasibility_weight: float = 0.3, feasibility_threshold: float = 0.4):
         self.beam_width = beam_width
         self.max_iterations = max_iterations
         self.convergence_threshold = convergence_threshold
@@ -68,6 +68,11 @@ class MolecularOptimizationAgent:
         except Exception:
             w = 0.3
         self.feasibility_weight = max(0.0, min(1.0, w))
+        # Minimum feasibility required for candidates (composite_score_0_1)
+        try:
+            self.feasibility_threshold = float(feasibility_threshold)
+        except Exception:
+            self.feasibility_threshold = 0.4
         
         # Initialize the LLM with all available tools
         self.model = ChatOpenAI(model='gpt-4o', temperature=0).bind_tools([
@@ -341,21 +346,14 @@ class MolecularOptimizationAgent:
         return (weighted_sum / total_weight) if total_weight > 0 else weighted_sum
 
     def calculate_combined_score(self, property_error: float, feasibility: Optional['MolecularOptimizationAgent.FeasibilityReport']) -> float:
-        """Combine property error with feasibility (higher feasibility improves score). Lower is better."""
-        feas = (
-            float(getattr(feasibility, 'mmff_strain_score_0_1', getattr(feasibility, 'composite_score_0_1', 0.0)))
-            if feasibility is not None else 0.0
-        )
-        w = self.feasibility_weight
-        # Combined: minimize error while rewarding higher feasibility
-        return (1.0 - w) * float(property_error) + w * (1.0 - feas)
+        """Return property error only (MAPE/MSE). Feasibility is enforced via threshold filter elsewhere."""
+        return float(property_error)
 
     def _feasibility_to_public_dict(self, feas: Optional['MolecularOptimizationAgent.FeasibilityReport']) -> Optional[Dict[str, Any]]:
-        """Return feasibility fields for reporting, excluding composite_score_0_1."""
+        """Return feasibility fields for reporting, including composite_score_0_1."""
         if feas is None:
             return None
         d = dict(feas.__dict__)
-        d.pop('composite_score_0_1', None)
         return d
     
     def run_beam_search_optimization(self, starting_molecule: str, target_properties: Dict[str, float], 
@@ -395,6 +393,16 @@ class MolecularOptimizationAgent:
         initial_prop_error = self.calculate_fitness_score(initial_properties, target_properties, weights)
         initial_feas = self._feasibility_from_smiles(starting_molecule)
         initial_score = self.calculate_combined_score(initial_prop_error, initial_feas)
+        # Enforce feasibility threshold
+        initial_feas_score = float(getattr(initial_feas, 'composite_score_0_1', 0.0)) if initial_feas else 0.0
+        if initial_feas_score < self.feasibility_threshold:
+            if verbose:
+                print(f"Initial molecule filtered out by feasibility < {self.feasibility_threshold:.2f}; using fallback TNT")
+            starting_molecule = 'Cc1c(cc(cc1[N+](=O)[O-])[N+](=O)[O-])[N+](=O)[O-]'
+            initial_properties = predict_properties.invoke(starting_molecule)
+            initial_prop_error = self.calculate_fitness_score(initial_properties, target_properties, weights)
+            initial_feas = self._feasibility_from_smiles(starting_molecule)
+            initial_score = self.calculate_combined_score(initial_prop_error, initial_feas)
         state.best_score = initial_score
         
         if verbose:
@@ -410,7 +418,7 @@ class MolecularOptimizationAgent:
             'score': initial_score,
             'prop_error': initial_prop_error,
             'feasibility': self._feasibility_to_public_dict(initial_feas),
-            'feasibility_score': float(getattr(initial_feas, 'mmff_strain_score_0_1', getattr(initial_feas, 'composite_score_0_1', 0.0))) if initial_feas else 0.0,
+            'feasibility_score': float(getattr(initial_feas, 'composite_score_0_1', getattr(initial_feas, 'mmff_strain_score_0_1', 0.0))) if initial_feas else 0.0,
             'parent': None,
             'modification': 'Initial molecule',
             'iteration': 0
@@ -475,6 +483,11 @@ class MolecularOptimizationAgent:
                     properties = predict_properties.invoke(modified_smiles)
                     prop_error = self.calculate_fitness_score(properties, target_properties, weights)
                     feas = self._feasibility_from_smiles(modified_smiles)
+                    feas_ok = (float(getattr(feas, 'composite_score_0_1', 0.0)) >= self.feasibility_threshold) if feas else False
+                    if not feas_ok:
+                        if verbose:
+                            print("    -> Filtered by feasibility threshold")
+                        continue
                     score = self.calculate_combined_score(prop_error, feas)
                     parent_candidates.append({
                         'smiles': modified_smiles,
@@ -482,7 +495,7 @@ class MolecularOptimizationAgent:
                         'score': score,
                         'prop_error': prop_error,
                         'feasibility': self._feasibility_to_public_dict(feas),
-                        'feasibility_score': float(getattr(feas, 'mmff_strain_score_0_1', getattr(feas, 'composite_score_0_1', 0.0))) if feas else 0.0,
+                        'feasibility_score': float(getattr(feas, 'composite_score_0_1', getattr(feas, 'mmff_strain_score_0_1', 0.0))) if feas else 0.0,
                         'parent': candidate['smiles'],
                         'modification': modification.get('description', 'Unknown modification'),
                         'iteration': iteration + 1,
@@ -507,6 +520,9 @@ class MolecularOptimizationAgent:
                         properties = predict_properties.invoke(mod_smiles)
                         prop_error = self.calculate_fitness_score(properties, target_properties, weights)
                         feas = self._feasibility_from_smiles(mod_smiles)
+                        feas_ok = (float(getattr(feas, 'composite_score_0_1', 0.0)) >= self.feasibility_threshold) if feas else False
+                        if not feas_ok:
+                            continue
                         score = self.calculate_combined_score(prop_error, feas)
                         # Deduplicate within parent_candidates
                         if any(pc['smiles'] == mod_smiles for pc in parent_candidates):
@@ -517,7 +533,7 @@ class MolecularOptimizationAgent:
                             'score': score,
                             'prop_error': prop_error,
                             'feasibility': self._feasibility_to_public_dict(feas),
-                            'feasibility_score': float(getattr(feas, 'mmff_strain_score_0_1', getattr(feas, 'composite_score_0_1', 0.0))) if feas else 0.0,
+                            'feasibility_score': float(getattr(feas, 'composite_score_0_1', getattr(feas, 'mmff_strain_score_0_1', 0.0))) if feas else 0.0,
                             'parent': candidate['smiles'],
                             'modification': mod.get('description', 'Generated modification'),
                             'iteration': iteration + 1,
@@ -572,6 +588,9 @@ class MolecularOptimizationAgent:
                         properties = predict_properties.invoke(mod_smiles)
                         prop_error = self.calculate_fitness_score(properties, target_properties, weights)
                         feas = self._feasibility_from_smiles(mod_smiles)
+                        feas_ok = (float(getattr(feas, 'composite_score_0_1', 0.0)) >= self.feasibility_threshold) if feas else False
+                        if not feas_ok:
+                            continue
                         score = self.calculate_combined_score(prop_error, feas)
                         child = {
                             'smiles': mod_smiles,
@@ -579,7 +598,7 @@ class MolecularOptimizationAgent:
                             'score': score,
                             'prop_error': prop_error,
                             'feasibility': self._feasibility_to_public_dict(feas),
-                            'feasibility_score': float(getattr(feas, 'mmff_strain_score_0_1', getattr(feas, 'composite_score_0_1', 0.0))) if feas else 0.0,
+                            'feasibility_score': float(getattr(feas, 'composite_score_0_1', getattr(feas, 'mmff_strain_score_0_1', 0.0))) if feas else 0.0,
                             'parent': parent['smiles'],
                             'modification': mod.get('description', 'Generated modification'),
                             'iteration': iteration + 1,
@@ -630,7 +649,7 @@ class MolecularOptimizationAgent:
                             'score': score,
                             'prop_error': prop_error,
                             'feasibility': self._feasibility_to_public_dict(feas),
-                            'feasibility_score': float(getattr(feas, 'mmff_strain_score_0_1', getattr(feas, 'composite_score_0_1', 0.0))) if feas else 0.0,
+                            'feasibility_score': float(getattr(feas, 'composite_score_0_1', getattr(feas, 'mmff_strain_score_0_1', 0.0))) if feas else 0.0,
                             'parent': parent['smiles'],
                             'modification': mod.get('description', 'Exhaustive fallback modification'),
                             'iteration': iteration + 1,
@@ -655,6 +674,9 @@ class MolecularOptimizationAgent:
                             properties = predict_properties.invoke(simple)
                             prop_error = self.calculate_fitness_score(properties, target_properties, weights)
                             feas = self._feasibility_from_smiles(simple)
+                            feas_ok = (float(getattr(feas, 'composite_score_0_1', 0.0)) >= self.feasibility_threshold) if feas else False
+                            if not feas_ok:
+                                continue
                             score = self.calculate_combined_score(prop_error, feas)
                             child = {
                                 'smiles': simple,
@@ -662,7 +684,7 @@ class MolecularOptimizationAgent:
                                 'score': score,
                                 'prop_error': prop_error,
                                 'feasibility': self._feasibility_to_public_dict(feas),
-                                'feasibility_score': float(getattr(feas, 'mmff_strain_score_0_1', getattr(feas, 'composite_score_0_1', 0.0))) if feas else 0.0,
+                                'feasibility_score': float(getattr(feas, 'composite_score_0_1', getattr(feas, 'mmff_strain_score_0_1', 0.0))) if feas else 0.0,
                                 'parent': parent['smiles'],
                                 'modification': 'Simple hydrogen substitution (fallback)',
                                 'iteration': iteration + 1,
@@ -1346,16 +1368,16 @@ class MolecularOptimizationAgent:
         return results
 
     def _find_starting_molecule_from_samples(self, target_properties: Dict[str, float], weights: Dict[str, float], verbose: bool = True) -> Optional[str]:
-        """Select a starting molecule from extracted_chemical_data.csv (preferred) or agent_sample.csv based on similarity.
+        """Select a starting molecule from sample_start_molecules.csv based on target similarity.
         Expects a CSV with a 'SMILES' column and property columns matching the prediction properties.
         If property columns are missing, predicts them on-the-fly.
         """
-        # Use only the extracted_chemical_data.csv dataset
-        p = os.path.join(os.getcwd(), 'extracted_chemical_data.csv')
+        # Use only the sample_start_molecules.csv dataset
+        p = os.path.join(os.getcwd(), 'sample_start_molecules.csv')
         sample_path = p if os.path.exists(p) else None
         if sample_path is None:
             if verbose:
-                print("  Sample CSV 'extracted_chemical_data.csv' not found")
+                print("  Sample CSV 'sample_start_molecules.csv' not found")
             return None
         try:
             df = pd.read_csv(sample_path)

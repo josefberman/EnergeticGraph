@@ -1,8 +1,11 @@
+import argparse
 from prediction import predict_properties
 
-SMILES_TNEB = "COc1c([N+](=O)[O-])cc([N+](=O)[O-])cc1[N+](=O)[O-]"
+parser = argparse.ArgumentParser(description="Predict energetic properties for a SMILES string")
+parser.add_argument("--smiles", help="SMILES string to predict")
+args = parser.parse_args()
 
-props = predict_properties.invoke(SMILES_TNEB)
+props = predict_properties.invoke(args.smiles)
 order = [
     'Density',
     'Detonation velocity',
@@ -12,7 +15,7 @@ order = [
 ]
 
 # Human-readable output
-print("Predicted properties for SMILES:", SMILES_TNEB)
+print("Predicted properties for SMILES:", args.smiles)
 max_key = max(len(k) for k in order)
 for k in order:
     v = props.get(k, "NA")
