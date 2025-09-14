@@ -129,9 +129,15 @@ def show_history(results: Dict[str, Any], metric: str = 'mape'):
                     if png:
                         st.image(png, width='stretch')
                     st.caption(f'SMILES: {smiles[:80]}{"..." if len(smiles) > 80 else ""}')
-                    feas = c.get('feasibility') or {}
-                    if isinstance(feas, dict) and 'composite_score_0_1' in feas:
-                        st.markdown(f"*Feasibility (0-1):* `{float(feas['composite_score_0_1']):.3f}`")
+                    feas_score = c.get('feasibility_score', None)
+                    if isinstance(feas_score, (int, float)):
+                        st.markdown(f"*Feasibility (0-1):* `{float(feas_score):.3f}`")
+                    else:
+                        feas = c.get('feasibility') or {}
+                        if isinstance(feas, dict) and 'composite_score_0_1' in feas:
+                            st.markdown(f"*Feasibility (0-1):* `{float(feas['composite_score_0_1']):.3f}`")
+                        else:
+                            st.markdown("*Feasibility (0-1):* `N/A`")
                     pe = c.get('prop_error')
                     if isinstance(pe, (int, float)):
                         st.markdown(f"*Error ({str(metric).upper()}):* `{pe:.6f}`")
