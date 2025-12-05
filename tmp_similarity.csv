@@ -1,0 +1,4 @@
+smiles1,smiles2,tanimoto_morgan2048
+O=[N+]([O-])N1C2C3N([N+](=O)[O-])C1C1N([N+](=O)[O-])C(C(N1[N+](=O)[O-])N3[N+](=O)[O-])N2[N+](=O)[O-],Nn1nnnc1C1=NN([N+](=O)[O-])C(O)N1,0.1951219512195122
+
+

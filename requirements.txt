@@ -30,6 +30,17 @@ openai
 chromadb
 sentence-transformers
 
+# Unstructured document processing (PDF + OCR)
+unstructured
+unstructured[pdf]
+unstructured-inference
+unstructured-client
+layoutparser
+pytesseract
+pdf2image
+opencv-python
+Pillow
+
 # ArXiv document loading
 arxiv
 

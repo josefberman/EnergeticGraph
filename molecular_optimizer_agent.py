@@ -25,6 +25,7 @@ from dotenv import load_dotenv
 import math
 import json
 from dataclasses import dataclass
+from chemrag_unstructured import build_index as chemrag_build_index, query_index as chemrag_query_index
 
 load_dotenv()
 
@@ -54,7 +55,7 @@ class OptimizationState:
 class MolecularOptimizationAgent:
     """Enhanced molecular optimization agent using LangGraph"""
     
-    def __init__(self, beam_width: int = 5, max_iterations: int = 10, convergence_threshold: float = 0.01, use_rag: bool = True, early_stop_patience: int | None = 3, proceed_k: int = 3, error_metric: str = 'mape', feasibility_weight: float = 0.3, feasibility_threshold: float = 0.4):
+    def __init__(self, beam_width: int = 5, max_iterations: int = 10, convergence_threshold: float = 0.01, use_rag: bool = True, early_stop_patience: int | None = 3, proceed_k: int = 3, error_metric: str = 'mape', feasibility_weight: float = 0.3, feasibility_threshold: float = 0.4, cli_rag_logging: bool = False):
         self.beam_width = beam_width
         self.max_iterations = max_iterations
         self.convergence_threshold = convergence_threshold
@@ -73,6 +74,8 @@ class MolecularOptimizationAgent:
             self.feasibility_threshold = float(feasibility_threshold)
         except Exception:
             self.feasibility_threshold = 0.4
+        # When running via Streamlit GUI with RAG, emit concise CLI logs for RAG actions
+        self.cli_rag_logging = bool(cli_rag_logging)
         
         # Initialize the LLM with all available tools
         self.model = ChatOpenAI(model='gpt-4o', temperature=0).bind_tools([
@@ -743,6 +746,7 @@ class MolecularOptimizationAgent:
                 raise RuntimeError("No valid modifications found to proceed to next iteration")
         
         # Prepare final results
+        rag_trace = locals().get('rag_trace', None)
         # Collect best candidate extra metrics for display
         try:
             best_entry = None
@@ -774,6 +778,12 @@ class MolecularOptimizationAgent:
             'search_history': state.search_history,
             'visited_molecules': len(visited_smiles)
         }
+        # Attach RAG trace if present
+        try:
+            if self.use_rag and rag_trace:
+                results['rag_trace'] = rag_trace
+        except Exception:
+            pass
         
         return results
     
@@ -785,17 +795,21 @@ class MolecularOptimizationAgent:
 
         if verbose:
             print(f"    Generating modifications for: {smiles}")
+        if getattr(self, 'cli_rag_logging', False):
+            print(f"[RAG] Searching literature for modification strategies for {smiles}...")
         
         # First, try to find modifications using RAG
         rag_modifications = self._find_modifications_with_rag(smiles, target_properties, current_score)
         
-        if verbose:
+        if verbose or getattr(self, 'cli_rag_logging', False):
             print(f"    Found {len(rag_modifications)} RAG modifications")
         
         # Then use the agent to generate additional modifications (with timeout)
+        if getattr(self, 'cli_rag_logging', False):
+            print("[RAG] Using agent to generate additional modifications...")
         agent_modifications = self._generate_modifications_with_agent(smiles, target_properties)
         
-        if verbose:
+        if verbose or getattr(self, 'cli_rag_logging', False):
             print(f"    Found {len(agent_modifications)} agent modifications")
         
         # Combine and return unique modifications
@@ -809,7 +823,7 @@ class MolecularOptimizationAgent:
                 unique_modifications.append(mod)
                 seen_smiles.add(mod['smiles'])
         
-        if verbose:
+        if verbose or getattr(self, 'cli_rag_logging', False):
             print(f"    Total unique modifications: {len(unique_modifications)}")
         
         return unique_modifications
@@ -1354,9 +1368,16 @@ class MolecularOptimizationAgent:
                 return {"error": f"Starting SMILES failed validation: {validation.get('error','invalid structure')}"}
             starting_molecule = starting_smiles
         else:
-            # Choose from samples (preferred path per user request); fallback to TNT
+            # Prefer local RAG over samples if enabled; fallback to samples then TNT
             try:
-                starting_molecule = self._find_starting_molecule_from_samples(target_properties, weights, verbose)
+                if self.use_rag:
+                    if getattr(self, 'cli_rag_logging', False):
+                        print("[RAG] Searching local PDFs for starting molecule (chemrag_unstructured)...")
+                    starting_molecule = self._find_starting_molecule_with_local_rag(target_properties, weights, verbose)
+                    if getattr(self, 'cli_rag_logging', False):
+                        print(f"[RAG] Starting molecule search result: {starting_molecule or 'None'}")
+                if not starting_molecule:
+                    starting_molecule = self._find_starting_molecule_from_samples(target_properties, weights, verbose)
             except Exception:
                 starting_molecule = None
             if not starting_molecule:
@@ -1366,6 +1387,164 @@ class MolecularOptimizationAgent:
         results = self.run_beam_search_optimization(starting_molecule, target_properties, weights, verbose, cancel_event=cancel_event)
         
         return results
+
+    def _find_starting_molecule_with_local_rag(self, target_properties: Dict[str, float], weights: Dict[str, float], verbose: bool = True) -> Optional[str]:
+        """Use local Unstructured→Chroma RAG to suggest a starting molecule from PDFs.
+        Builds the index if needed, queries by target properties, extracts SMILES/names,
+        validates candidates, scores by property error, and returns the best SMILES.
+        """
+        # Ensure index exists (build once if missing/empty)
+        try:
+            persist_dir = os.path.join(os.getcwd(), 'chroma_chemrag')
+            needs_build = (not os.path.exists(persist_dir)) or (len(os.listdir(persist_dir)) == 0)
+            if needs_build:
+                if verbose:
+                    print("  Building local RAG index from 'RAG DB' PDFs...")
+                chemrag_build_index()
+        except Exception as e:
+            if verbose:
+                print(f"  Skipping index build (continuing with existing if any): {e}")
+
+        # Formulate query from target properties
+        try:
+            target_str = ", ".join(f"{k}: {v}" for k, v in target_properties.items())
+        except Exception:
+            target_str = str(target_properties)
+        query = (
+            f"energetic materials with properties close to -> {target_str} ; "
+            f"include SMILES or molecule name"
+        )
+
+        try:
+            docs = chemrag_query_index(query, k=10) or []
+        except Exception:
+            docs = []
+
+        # Optional CLI logging of sources/pages
+        if getattr(self, 'cli_rag_logging', False):
+            try:
+                print("[RAG] Retrieved sources and pages:")
+                for d in docs:
+                    md = d.get('metadata', {}) if isinstance(d, dict) else {}
+                    src = md.get('source', 'unknown')
+                    page = md.get('page', None)
+                    pages = md.get('pages', None)
+                    if isinstance(page, int):
+                        print(f"  - {os.path.basename(src)} (page {page})")
+                    elif isinstance(pages, list) and pages:
+                        pg_str = ", ".join(str(p) for p in pages[:6]) + ("..." if len(pages) > 6 else "")
+                        print(f"  - {os.path.basename(src)} (pages {pg_str})")
+                    else:
+                        print(f"  - {os.path.basename(src)} (page N/A)")
+            except Exception:
+                pass
+
+        # Helpers to extract SMILES and names
+        import re as _re
+        from rdkit import Chem as _Chem
+
+        def _extract_smiles(text: str) -> List[str]:
+            if not text:
+                return []
+            candidates: List[str] = []
+            # Explicit labels
+            for m in _re.finditer(r"SMILES\s*[:=]\s*([A-Za-z0-9@+\-\[\]\(\)=#$/%.]+)", text, _re.IGNORECASE):
+                candidates.append(m.group(1).strip())
+            # Generic SMILES-like tokens
+            for m in _re.finditer(r"(?<![A-Za-z0-9])([A-Za-z0-9@+\-\[\]\(\)=#$/%.]{2,200})(?![A-Za-z0-9])", text):
+                tok = m.group(1).strip()
+                if not _re.search(r"[\[\]#=\d]", tok):
+                    continue
+                candidates.append(tok)
+            # Validate and deduplicate
+            uniq: List[str] = []
+            for s in candidates:
+                if s in uniq:
+                    continue
+                try:
+                    if _Chem.MolFromSmiles(s) is None:
+                        continue
+                except Exception:
+                    continue
+                uniq.append(s)
+            return uniq[:200]
+
+        def _extract_names(text: str) -> List[str]:
+            if not text:
+                return []
+            names: List[str] = []
+            for m in _re.finditer(r"(?:Name|Compound|Molecule)\s*[:=]\s*([A-Za-z0-9,\-\s()]+)", text, _re.IGNORECASE):
+                cand = m.group(1).strip()
+                if 2 <= len(cand) <= 200:
+                    names.append(cand)
+            for m in _re.finditer(r"([A-Za-z][A-Za-z0-9,\-()]{2,200})", text):
+                tok = m.group(1)
+                if not _re.search(r"[-,\d]", tok):
+                    continue
+                if _re.fullmatch(r"[\d,\-()]+", tok):
+                    continue
+                names.append(tok)
+            seen = set()
+            out: List[str] = []
+            for n in names:
+                n2 = n.strip()
+                if n2 and n2 not in seen:
+                    seen.add(n2)
+                    out.append(n2)
+            return out[:200]
+
+        # Gather candidates from docs
+        smiles_candidates: List[str] = []
+        name_candidates: List[str] = []
+        for d in docs:
+            text = str(d.get('content', '') or '')
+            for s in _extract_smiles(text):
+                smiles_candidates.append(s)
+            for nm in _extract_names(text):
+                name_candidates.append(nm)
+
+        # Convert names to SMILES via tool
+        for nm in name_candidates[:100]:
+            try:
+                smi = convert_name_to_smiles.invoke(nm)
+                if isinstance(smi, str) and smi and smi.lower() != 'did not convert':
+                    smiles_candidates.append(smi.strip())
+            except Exception:
+                continue
+
+        # Score candidates and pick best by property error
+        best_smi: Optional[str] = None
+        best_score: float = float('inf')
+        seen = set()
+        for smi in smiles_candidates:
+            if smi in seen:
+                continue
+            seen.add(smi)
+            try:
+                if _Chem.MolFromSmiles(smi) is None:
+                    continue
+                props = predict_properties.invoke(smi)
+                score = self.calculate_fitness_score(props, target_properties, weights)
+            except Exception:
+                continue
+            if score < best_score:
+                # Validate basic structure
+                try:
+                    validation = validate_molecule_structure.invoke(smi)
+                    if not validation.get('valid', False):
+                        continue
+                except Exception:
+                    pass
+                best_score = score
+                best_smi = smi
+
+        if verbose:
+            if best_smi is not None:
+                print(f"  Local RAG selected starting molecule: {best_smi} (score: {best_score:.4f})")
+            else:
+                print("  Local RAG did not find a suitable starting molecule")
+
+        return best_smi
 
     def _find_starting_molecule_from_samples(self, target_properties: Dict[str, float], weights: Dict[str, float], verbose: bool = True) -> Optional[str]:
         """Select a starting molecule from sample_start_molecules.csv based on target similarity.

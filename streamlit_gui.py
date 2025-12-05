@@ -50,6 +50,7 @@ def background_run(csv_path: str, use_rag: bool, beam_width: int, max_iterations
             early_stop_patience=None,
             proceed_k=proceed_k,
             error_metric=error_metric,
+            cli_rag_logging=bool(use_rag),
         )
         results = agent.process_csv_input(csv_path, verbose=False, cancel_event=cancel_event, starting_smiles=starting_smiles if starting_smiles else None, prefer_user_start=bool(prefer_user_start))
         result_holder['results'] = results
@@ -263,6 +264,24 @@ def main():
         show_best(results, metric=str(metric).lower() if 'metric' in locals() else 'mape')
         st.divider()
         show_history(results, metric=str(metric).lower() if 'metric' in locals() else 'mape')
+        # Show RAG trace if available
+        rag_trace = results.get('rag_trace') if isinstance(results, dict) else None
+        if isinstance(rag_trace, dict):
+            st.subheader('RAG Retrieval Trace')
+            st.markdown(f"**Query:** {rag_trace.get('query','')}")
+            titles = rag_trace.get('retrieved_titles') or []
+            st.markdown(f"**Retrieved articles ({rag_trace.get('retrieved_count',0)}):**")
+            if titles:
+                for t in titles:
+                    st.markdown(f"- {t}")
+            st.markdown(f"**Names extracted:** `{rag_trace.get('names_extracted',0)}` | **Names converted:** `{rag_trace.get('names_converted',0)}`")
+            st.markdown(f"**SMILES extracted:** `{rag_trace.get('smiles_extracted',0)}` | **Candidates scored:** `{rag_trace.get('candidates_scored',0)}`")
+            if rag_trace.get('fallback_used'):
+                st.info('RAG yielded no molecules; fell back to local CSV candidates')
+            preview = rag_trace.get('top_preview') or []
+            if preview:
+                st.markdown('**Top candidates (preview):**')
+                st.table({ 'smiles': [p.get('smiles') for p in preview], 'error': [p.get('score') for p in preview] })
 
 
 if __name__ == '__main__':
