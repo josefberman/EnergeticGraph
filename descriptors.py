@@ -8,11 +8,29 @@ from collections import defaultdict
 import numpy as np
 from rdkit.Chem.Descriptors import _descList
 from rdkit.ML.Descriptors.MoleculeDescriptors import MolecularDescriptorCalculator
+from rdkit import Chem
+from rdkit.Chem import AllChem
+
+# Try importing thermo for heat capacity
+try:
+    from thermo import Chemical
+    THERMO_AVAILABLE = True
+except ImportError:
+    THERMO_AVAILABLE = False
+    print("Warning: thermo not installed. Cv will be 0. Install with: pip install thermo")
 
 
+def get_num_atom(mol: Chem.Mol, atomic_number: int) -> int:
+    """
+    Counts the number of atoms of a specified atomic number in a given RDKit molecule.
 
-def get_num_atom(mol, atomic_number):
-    '''returns the number of atoms of particular atomic number'''
+    Parameters:
+        mol (rdkit.Chem.Mol): The molecule object to analyze.
+        atomic_number (int): The atomic number of the atom to count.
+
+    Returns:
+        int: The number of atoms in the molecule with the specified atomic number.
+    """
     num = 0
     for atom in mol.GetAtoms():
         atom_num = atom.GetAtomicNum()
@@ -21,188 +39,298 @@ def get_num_atom(mol, atomic_number):
     return num
 
 
-def return_atom_nums(mol):
-    ''' returns a vector with the number of C,N,H,O,F atoms'''
-    n_O = get_num_atom(mol,8)
-    n_C = get_num_atom(mol,6)
-    n_N = get_num_atom(mol,7)
-    n_H = get_num_atom(mol,1)
-    n_F = get_num_atom(mol,9)
-    return [n_O, n_C, n_N, n_H, n_F]
+def count_substructure(mol: Chem.Mol, substruct_smarts: str) -> int:
+    """
+    Counts the number of times a given substructure (by SMILES) appears in a molecule.
+    
+    Parameters:
+        mol: RDKit Mol object
+        substruct_smarts: SMARTS string of the substructure
+    
+    Returns:
+        int: Number of substructure occurrences in the molecule.
+    """
+    substruct = Chem.MolFromSmarts(substruct_smarts)
+    if substruct is None or mol is None:
+        return 0
+    return len(mol.GetSubstructMatches(substruct))
 
 
-def get_neigh_dict(atom):
-    '''returns a dictionary with the number of neighbors for a given atom'''
-    neighs = defaultdict(int)
-    for atom in atom.GetNeighbors():
-        neighs[atom.GetSymbol()] += 1
-    return neighs
+def estimate_zpe(mol: Chem.Mol) -> float:
+    """
+    Fast estimation of Zero-Point Energy (ZPE) based on bond counting.
+    Uses approximate vibrational frequencies for common bond types.
+    
+    Returns:
+        float: Estimated ZPE in Hartree
+    """
+    # Approximate frequencies in cm^-1
+    # Very rough averages
+    freq_map = {
+        'C-H': 2900,
+        'N-H': 3300,
+        'O-H': 3600,
+        'C-C': 1000,
+        'C=C': 1600,
+        'C#C': 2100,
+        'C-N': 1100,
+        'C=N': 1600,
+        'C#N': 2200,
+        'C-O': 1100,
+        'C=O': 1700,
+        'N-N': 1000,
+        'N=N': 1500,
+        'N-O': 1000,
+        'N=O': 1500,
+        'O-O': 900
+    }
+    
+    total_freq_sum = 0.0
+    
+    for bond in mol.GetBonds():
+        a1 = bond.GetBeginAtom()
+        a2 = bond.GetEndAtom()
+        sym1 = a1.GetSymbol()
+        sym2 = a2.GetSymbol()
+        bond_type = bond.GetBondType()
+        
+        # Sort symbols alphabetically
+        key_atoms = "-".join(sorted([sym1, sym2]))
+        
+        # Determine bond order string
+        if bond_type == Chem.BondType.SINGLE:
+            key_bond = "-"
+        elif bond_type == Chem.BondType.DOUBLE:
+            key_bond = "="
+        elif bond_type == Chem.BondType.TRIPLE:
+            key_bond = "#"
+        elif bond_type == Chem.BondType.AROMATIC:
+            key_bond = "-" # Treat aromatic as single for rough frequency or average
+            # Ideally averaging between single and double, say 1400
+            if key_atoms == "C-C":
+                total_freq_sum += 1450
+                continue
+        else:
+            key_bond = "-"
+
+        key = f"{sym1}{key_bond}{sym2}" if sym1 < sym2 else f"{sym2}{key_bond}{sym1}"
+        
+        # Try to find frequency, default to 1000 if unknown
+        freq = freq_map.get(key, 1000)
+        total_freq_sum += freq
+
+    # Conversion: E = 0.5 * h * c * nu
+    # 1 cm^-1 = 4.55633e-6 Hartree
+    # ZPE = 0.5 * sum(nu) * 4.55633e-6
+    zpe_hartree = 0.5 * total_freq_sum * 4.55633e-6
+    return zpe_hartree
 
 
-def get_num_with_neighs(mol, central_atom, target_dict):
-    '''returns how many atoms of a particular type have a particular configuration of neighbora'''
-    target_num = 0
-    for key in list(target_dict.keys()):
-        target_num += target_dict[key]
-
-    num = 0
-    for atom in mol.GetAtoms():
-        if (atom.GetSymbol() == central_atom):
-            target = True
-            nbs = get_neigh_dict(atom)
-            for key in list(target_dict.keys()):
-                if (nbs[key] != target_dict[key]):
-                    target = False
-                    break
-
-            n_nbs = len(atom.GetNeighbors())
-            if (target_num != n_nbs):
-                target = False
-
-            if (target):
-                num +=1
-
-    return num
+def get_cv(smiles: str) -> float:
+    """
+    Calculate Volumetric Heat Capacity (Cv) using thermo package.
+    Cv = Cp - R (approximation for ideal gas).
+    
+    Returns:
+        float: Cv in J/(mol*K). Returns 0 if thermo not installed.
+    """
+    if not THERMO_AVAILABLE:
+        return 0.0
+    try:
+        chem = Chemical(smiles)
+        # Cp in J/mol/K at 298.15K
+        Cp = chem.Cpm
+        if Cp is None:
+            return 0.0
+        # Cv approx Cp - R for ideal gas
+        R = 8.314
+        return Cp - R
+    except:
+        return 0.0
 
 
-def oxygen_balance_1600(mol):
-    '''returns the OB_16000 descriptor'''
-    n_O = get_num_atom(mol, 8)
-    n_C = get_num_atom(mol, 6)
-    n_H = get_num_atom(mol, 1)
-    mol_weight = Descriptors.ExactMolWt(mol)
-    return 1600*(n_O - 2*n_C - n_H/2)/mol_weight
+def get_homo_lumo(mol: Chem.Mol) -> float:
+    """
+    Estimate electronic "gap" using Gasteiger Partial Charges.
+    Returns the difference between Max Positive and Max Negative charge (Charge Separation).
+    This serves as a fast, robust proxy for electronic hardness/polarizability 
+    when QM tools (like PySCF/xTB) are unavailable on Windows.
+    
+    Returns:
+        float: Charge gap (proxy for HOMO-LUMO).
+    """
+    try:
+        AllChem.ComputeGasteigerCharges(mol)
+        charges = [float(a.GetProp('_GasteigerCharge')) for a in mol.GetAtoms() if a.HasProp('_GasteigerCharge')]
+        if not charges:
+            return 0.0
+        # Gap ~ Max Positive - Min Negative (most positive - most negative)
+        return max(charges) - min(charges)
+    except:
+        return 0.0
 
 
-def oxygen_balance_100(mol, scaled=False):
-    '''returns the OB_100 descriptor'''
-    n_O = get_num_atom(mol, 8)
-    n_C = get_num_atom(mol, 6)
-    n_H = get_num_atom(mol, 1)
-    n_atoms = mol.GetNumAtoms()
-    OB_100 = 100*(n_O - 2*n_C - n_H/2)/n_atoms
+def create_descriptor(smiles: str) -> list:
+    """
+    Generate a set of molecular descriptors from a SMILES string.
 
-    if scaled:
-        return (OB_100 + 28.5)/18.96 + 1.0 ## rescales to center around one with unit variance based on statistics of the combined energetics dataset
-    else:
-        return OB_100
+    Parameters:
+        smiles (str): The SMILES representation of the molecule.
 
-def return_combined_nums(mol):
-    return custom_descriptor_set(mol)
+    Returns:
+        list: List of descriptor values
+    """
+    descriptor = []
+    try:
+        mol = Chem.MolFromSmiles(smiles)
+    except:
+        return None
+    # Add molecular weight as a descriptor (redundant with later, but per prompt)
+    try:
+        descriptor.append(Descriptors.MolWt(mol))  # molecular weight
+        
+        # New Descriptors
+        descriptor.append(estimate_zpe(mol)) # ZPE (Hartree)
+        descriptor.append(get_cv(smiles))    # Cv (J/mol/K)
+        # Note: HOMO-LUMO calculation is slow (seconds/mol). 
+        # Comment out the next line if speed is critical for large datasets.
+        descriptor.append(get_homo_lumo(mol)) # HOMO-LUMO Gap (Hartree)
+    
+        substructure_smarts_list = [
+            # Single atoms
+            '[C]',  # Carbon
+            '[H]',  # Hydrogen
+            '[N]',  # Nitrogen
+            '[O]',  # Oxygen
 
-def custom_descriptor_set(mol):
-    n_a = mol.GetNumAtoms()
-    n_C = get_num_atom(mol, 'C')
-    n_N = get_num_atom(mol, 'N')
-    n_O = get_num_atom(mol, 'O')
-    n_H = get_num_atom(mol, 'H')
-    n_F = get_num_atom(mol, 'F')
-    n_O1 = get_num_with_neighs(mol, 'O', {'N': 1})
-    n_O2 = get_num_with_neighs(mol, 'O', {'N': 1,'C': 1})
-    n_O3 = get_num_with_neighs(mol, 'O', {'C': 1})
-    n_O4 = get_num_with_neighs(mol, 'O', {'C': 1,'H': 1})
+            # 2-atom fragments (alphabetical by first then second atom)
+            '[C]~[C]',
+            '[C]~[H]',
+            '[C]~[N]',
+            '[C]~[O]',
+            '[H]~[H]',
+            '[H]~[N]',
+            '[H]~[O]',
+            '[N]~[N]',
+            '[N]~[O]',
+            '[O]~[O]',
 
-    if (n_C == 0):
-        NCratio = n_N/0.00001
-    else:
-        NCratio = n_N/n_C
+            # 3-atom linear fragments (grouped by central/first atom; within that, second, then third atom alphabetical)
+            # C as first atom
+            '[C]~[C]~[C]',
+            '[C]~[C]~[H]',
+            '[C]~[C]~[N]',
+            '[C]~[C]~[O]',
+            '[C]~[N]~[C]',
+            '[C]~[N]~[H]',
+            '[C]~[N]~[N]',
+            '[C]~[N]~[O]',
+            '[C]~[O]~[C]',
+            '[C]~[O]~[H]',
+            '[C]~[O]~[N]',
+            '[C]~[O]~[O]',
+            # H as first atom
+            '[H]~[C]~[H]',
+            '[H]~[C]~[N]',
+            '[H]~[C]~[O]',
+            '[H]~[N]~[H]',
+            '[H]~[N]~[N]',
+            '[H]~[N]~[O]',
+            '[H]~[O]~[H]',
+            '[H]~[O]~[N]',
+            '[H]~[O]~[O]',
+            # N as first atom
+            '[N]~[C]~[N]',
+            '[N]~[C]~[O]',
+            '[N]~[N]~[N]',
+            '[N]~[O]~[N]',
+            '[N]~[O]~[O]',
+            # O as first atom
+            '[O]~[C]~[O]',
+            '[O]~[N]~[N]',
+            '[O]~[N]~[O]',
+            '[O]~[O]~[O]',
 
-    return [oxygen_balance_100(mol, scaled=True), n_C, n_N, n_O1, n_O2, n_O3, n_O4, n_H, n_F, NCratio,
-                get_num_with_neighs(mol, 'N', {'O': 2, 'C': 1}) ,  #CNO2
-                get_num_with_neighs(mol, 'N', {'O': 2, 'N': 1}) ,  #NNO2
-                get_num_with_neighs(mol, 'N', {'O': 2})         ,  #ONO
-                get_num_with_neighs(mol, 'N', {'O': 3})         ,  #ONO2
-                get_num_with_neighs(mol, 'N', {'N': 1, 'C': 1}) ,  #CNN
-                get_num_with_neighs(mol, 'N', {'N': 2})         ,  #NNN
-                get_num_with_neighs(mol, 'N', {'C': 1,'O': 1})  ,  #CNO
-                get_num_with_neighs(mol, 'N', {'C': 1,'H': 2})  ,  #CNH2
-                get_num_with_neighs(mol, 'N', {'C': 2,'O': 1})  ,  #CN(O)C
-                get_num_with_neighs(mol, 'F', {'C': 1})         ,  #CF
-                get_num_with_neighs(mol, 'N', {'C': 1, 'N':2})     #CNF
-                #n_C/n_a, n_N/n_a, n_O/n_a, n_H/n_a
-           ]
+            # Three Attachments (groups by central atom with sections for C and N)
+            # C Central, sorted lex by number and type of neighbors
+            "[C](~[C])(~[N])(~[N])",
+            "[C](~[C])(~[N])(~[O])",
+            "[C](~[C])(~[O])(~[O])",
+            "[C](~[H])(~[H])(~[H])",
+            "[C](~[H])(~[H])(~[N])",
+            "[C](~[H])(~[H])(~[O])",
+            "[C](~[H])(~[N])(~[N])",
+            "[C](~[H])(~[N])(~[O])",
+            "[C](~[H])(~[O])(~[O])",
+            "[C](~[N])(~[N])(~[N])",
+            "[C](~[N])(~[N])(~[O])",
+            "[C](~[N])(~[O])(~[O])",
+            "[C](~[O])(~[O])(~[O])",
 
-def modified_oxy_balance(mol):
-    '''returns an OB_100 descriptor with modified oxygen types
-        ref: A.  R.  Martin  and  H.  J.  Yallop,  Trans.  Faraday  Soc.
-                54,  257(1958), URLhttp://dx.doi.org/10.1039/TF9585400257.
-    '''
-    n_O2 = get_num_with_neighs(mol, 'O', {'N': 1,'C': 1})
-    n_O3 = get_num_with_neighs(mol, 'O', {'C': 1})
-    n_O4 = get_num_with_neighs(mol, 'O', {'C': 1,'H': 1})
-    n_atoms = mol.GetNumAtoms()
+            # N Central, sorted
+            "[N](~[C])(~[C])(~[C])",
+            "[N](~[C])(~[C])(~[H])",
+            "[N](~[C])(~[C])(~[N])",
+            "[N](~[C])(~[C])(~[O])",
+            "[N](~[C])(~[H])(~[H])",
+            "[N](~[C])(~[H])(~[N])",
+            "[N](~[C])(~[H])(~[O])",
+            "[N](~[C])(~[N])(~[N])",
+            "[N](~[C])(~[N])(~[O])",
+            "[N](~[C])(~[O])(~[O])",
+            "[N](~[H])(~[H])(~[H])",
+            "[N](~[H])(~[H])(~[N])",
+            "[N](~[H])(~[H])(~[O])",
+            "[N](~[H])(~[N])(~[N])",
+            "[N](~[H])(~[N])(~[O])",
+            "[N](~[H])(~[O])(~[O])",
+            "[N](~[N])(~[N])(~[N])",
+            "[N](~[N])(~[N])(~[O])",
+            "[N](~[N])(~[O])(~[O])",
+            "[N](~[O])(~[O])(~[O])",
 
-    OB = oxygen_balance_100(mol)
-
-    correction = 100*(1.0*n_O2 + 1.8*n_O2 + 2.2*n_O3)/n_atoms
-
-    #if (OB > 0 ):
-    #    mod_OB = OB - correction
-
-    #if (OB <= 0 ):
-    #    mod_OB = OB + correction
-
-    return OB - correction
-
-def custom_oxy_balance(mol, w1=1, w2=0.3, w3=-0.6, w4=-1.8, w5=-1.9, w6=-0.5):
-    '''returns output of a linear model based on atom types obtained by Martin \& Yallop
-        ref: A.  R.  Martin  and  H.  J.  Yallop,  Trans.  Faraday  Soc.
-                54,  257(1958), URLhttp://dx.doi.org/10.1039/TF9585400257.
-    '''
-    n_C = get_num_atom(mol,6)
-    n_N = get_num_atom(mol,7)
-    n_H = get_num_atom(mol,1)
-    n_O1 = get_num_with_neighs(mol, 'O', {'N': 1})
-    n_O2 = get_num_with_neighs(mol, 'O', {'N': 1,'C': 1})
-    n_O3 = get_num_with_neighs(mol, 'O', {'C': 1})
-    n_O4 = get_num_with_neighs(mol, 'O', {'C': 1,'H': 1})
-    mol_weight = Descriptors.ExactMolWt(mol)
-    return w1*n_O1 + w2*n_O2 + w3*n_O3 + w4*n_O4 + w5*n_C + w6*n_H
-
-
-def return_atom_nums_modified_OB(mol):
-    '''returns number of different atoms, including modified oxygen types
-        ref: A.  R.  Martin  and  H.  J.  Yallop,  Trans.  Faraday  Soc.
-                54,  257(1958), URLhttp://dx.doi.org/10.1039/TF9585400257.
-    '''
-    n_C = get_num_atom(mol, 6)
-    n_N = get_num_atom(mol, 7)
-    n_H = get_num_atom(mol, 1)
-    n_F = get_num_atom(mol, 9)
-    n_O1 = get_num_with_neighs(mol, 'O', {'N': 1})
-    n_O2 = get_num_with_neighs(mol, 'O', {'N': 1,'C': 1})
-    n_O3 = get_num_with_neighs(mol, 'O', {'C': 1})
-    n_O4 = get_num_with_neighs(mol, 'O', {'C': 1,'H': 1})
-    return [n_C, n_N, n_H, n_O1, n_O2, n_O3, n_O4, n_F]
-
-
-
-def RDKit_descriptor_featurizer(mol_list, descriptor_list=_descList, return_names=True):
-    num_descriptors = len(descriptor_list)
-    num_mols = len(mol_list)
-    descriptor_function_names = [descriptor_list[i][0] for i in range(num_descriptors)]
-
-    mdc = MolecularDescriptorCalculator(simpleList=descriptor_function_names)
-
-    X = np.zeros([num_mols, num_descriptors])
-
-    for i in range(num_mols):
-        X[i,:] = np.array(mdc.CalcDescriptors(mol_list[i]))
-
-    descriptor_function_names = np.array(descriptor_function_names)
-
-    #Drop descriptors that are zero for every molecule in the list
-    cols_to_drop = []
-    for i in range(num_descriptors):
-        if (sum(X[:,i]) == 0):
-            cols_to_drop += [i]
-
-    X_truncated = np.delete(X, cols_to_drop, 1)
-    descriptor_function_names_truncated = np.delete(descriptor_function_names, cols_to_drop, 0)
-
-    descriptor_function_names = list(descriptor_function_names)
-
-    if (return_names):
-        return descriptor_function_names_truncated, X_truncated
-    else:
-        return X_truncated
+            # Four Attachments (C Central, grouped by composition, increasing number of H, N, O, etc.)
+            "[C](~[C])(~[C])(~[C])(~[C])",
+            "[C](~[C])(~[C])(~[C])(~[H])",
+            "[C](~[C])(~[C])(~[C])(~[N])",
+            "[C](~[C])(~[C])(~[C])(~[O])",
+            "[C](~[C])(~[C])(~[H])(~[H])",
+            "[C](~[C])(~[C])(~[H])(~[N])",
+            "[C](~[C])(~[C])(~[H])(~[O])",
+            "[C](~[C])(~[C])(~[N])(~[N])",
+            "[C](~[C])(~[C])(~[N])(~[O])",
+            "[C](~[C])(~[C])(~[O])(~[O])",
+            "[C](~[C])(~[H])(~[H])(~[H])",
+            "[C](~[C])(~[H])(~[H])(~[N])",
+            "[C](~[C])(~[H])(~[H])(~[O])",
+            "[C](~[C])(~[H])(~[N])(~[N])",
+            "[C](~[C])(~[H])(~[N])(~[O])",
+            "[C](~[C])(~[H])(~[O])(~[O])",
+            "[C](~[C])(~[N])(~[N])(~[N])",
+            "[C](~[C])(~[N])(~[N])(~[O])",
+            "[C](~[C])(~[N])(~[O])(~[O])",
+            "[C](~[C])(~[O])(~[O])(~[O])",
+            "[C](~[H])(~[H])(~[H])(~[H])",
+            "[C](~[H])(~[H])(~[H])(~[N])",
+            "[C](~[H])(~[H])(~[H])(~[O])",
+            "[C](~[H])(~[H])(~[N])(~[N])",
+            "[C](~[H])(~[H])(~[N])(~[O])",
+            "[C](~[H])(~[H])(~[O])(~[O])",
+            "[C](~[H])(~[N])(~[N])(~[N])",
+            "[C](~[H])(~[N])(~[N])(~[O])",
+            "[C](~[H])(~[N])(~[O])(~[O])",
+            "[C](~[H])(~[O])(~[O])(~[O])",
+            "[C](~[N])(~[N])(~[N])(~[N])",
+            "[C](~[N])(~[N])(~[N])(~[O])",
+            "[C](~[N])(~[N])(~[O])(~[O])",
+            "[C](~[N])(~[O])(~[O])(~[O])",
+            "[C](~[O])(~[O])(~[O])(~[O])"
+        ]
+        for smarts in substructure_smarts_list:
+            descriptor.append(count_substructure(mol, smarts))
+        descriptor.append(Descriptors.NumAromaticRings(mol))  # number of aromatic rings
+        descriptor.append(Descriptors.NumHAcceptors(mol))  # number of hydrogen bond acceptors
+        descriptor.append(Descriptors.NumHDonors(mol))     # number of hydrogen bond donors
+    except:
+        print(smiles)
+    return descriptor
