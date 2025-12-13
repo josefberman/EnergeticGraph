@@ -866,21 +866,21 @@ class MolecularOptimizationAgent:
             if prop_name in current_properties:
                 current_value = current_properties[prop_name]
                 
-                if prop_name == "Density" and current_value < target_value:
+                if prop_name == "density" and current_value < target_value:
                     queries.extend([
                         "increase density energetic materials molecular modifications",
                         "high density substituents energetic compounds",
                         "density enhancement energetic materials"
                     ])
                 
-                elif prop_name == "Detonation velocity" and current_value < target_value:
+                elif prop_name == "det_velocity" and current_value < target_value:
                     queries.extend([
                         "increase detonation velocity molecular modifications",
                         "high detonation velocity substituents",
                         "detonation velocity enhancement energetic materials"
                     ])
                 
-                elif prop_name == "Explosion pressure" and current_value < target_value:
+                elif prop_name == "det_pressure" and current_value < target_value:
                     queries.extend([
                         "increase explosion pressure molecular modifications",
                         "high explosion pressure substituents",
@@ -1336,8 +1336,7 @@ class MolecularOptimizationAgent:
         target_properties = {}
         weights = {}
         
-        property_columns = ['Density', 'Detonation velocity', 'Explosion capacity', 
-                           'Explosion pressure', 'Explosion heat']
+        property_columns = ['density', 'det_velocity', 'det_pressure', 'hf_solid']
         
         for prop in property_columns:
             if prop in df.columns and not pd.isna(row[prop]):
@@ -1699,7 +1698,7 @@ class MolecularOptimizationAgent:
         
         # Create queries based on property ranges
         for prop_name, target_value in target_properties.items():
-            if prop_name == "Density":
+            if prop_name == "density":
                 if target_value > 1.8:
                     queries.append("high density energetic materials explosives")
                 elif target_value > 1.5:
@@ -1707,7 +1706,7 @@ class MolecularOptimizationAgent:
                 else:
                     queries.append("low density energetic materials")
             
-            elif prop_name == "Detonation velocity":
+            elif prop_name == "det_velocity":
                 if target_value > 8000:
                     queries.append("high detonation velocity explosives RDX HMX")
                 elif target_value > 6000:
@@ -1715,7 +1714,7 @@ class MolecularOptimizationAgent:
                 else:
                     queries.append("low detonation velocity energetic materials")
             
-            elif prop_name == "Explosion pressure":
+            elif prop_name == "det_pressure":
                 if target_value > 300:
                     queries.append("high explosion pressure energetic materials")
                 elif target_value > 200:
