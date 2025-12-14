@@ -1,19 +1,21 @@
+from typing import Dict, Any, List
 import os
 import threading
 import time
 import base64
 from io import BytesIO
-import pandas as pd
+from taipy.gui import Gui, State, notify
 from rdkit import Chem
 from rdkit.Chem import Draw
-from taipy.gui import Gui, notify, State, invoke_long_callback
-
 from molecular_optimizer_agent import MolecularOptimizationAgent
 
-# --- Helper Functions ---
 
-def smiles_to_base64_png(smiles: str, width: int = 300, height: int = 220) -> str:
-    """Convert SMILES to a base64 PNG string for display in Taipy."""
+# Ensure Transformers does not try to import TensorFlow/Keras (avoids Keras 3 error)
+os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
+
+
+def smiles_to_base64(smiles: str, width: int = 300, height: int = 220) -> str:
+    """Convert SMILES to base64-encoded PNG image."""
     try:
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
@@ -26,281 +28,438 @@ def smiles_to_base64_png(smiles: str, width: int = 300, height: int = 220) -> st
     except Exception:
         return ""
 
-# --- State Variables ---
 
+# Global state variables
+uploaded_file = None
 uploaded_path = ""
 use_rag = False
-metric = "mape"  # Options: 'mape', 'mse'
+error_metric = "mape"
 beam_width = 5
 max_iterations = 8
 proceed_k = 3
-start_mode = "From samples"  # Options: 'From samples', 'Provide SMILES'
-start_mode_lov = [("From samples", "From samples"), ("Provide SMILES", "Provide SMILES")]
+start_mode = "From samples"
 user_smiles = ""
-prefer_user_start = False
 is_running = False
-can_run_opt = True
+cancel_event = None
+worker_thread = None
+result_holder = {}
 results = None
+show_results = False
 
-# For displaying results
-best_smiles_img = ""
-start_smiles_img = ""
-best_score_display = ""
-best_prop_error_display = ""
-best_feas_display = ""
-target_props_data = pd.DataFrame()
-best_props_data = pd.DataFrame()
-search_history_data = [] # List of expandable items or formatted strings
-rag_trace_display = ""
+# Display variables
+start_mol_img = ""
+best_mol_img = ""
+start_smiles_text = ""
+best_smiles_text = ""
+target_props = {}
+best_props = {}
+best_score_text = ""
+iterations_data = []
+rag_info = ""
 
-# --- Worker Function (Background) ---
 
-def run_optimization(state):
-    """
-    Wrapper to run the optimization agent in a background thread.
-    We use invoke_long_callback or manual threading updates.
-    """
-    # Prepare arguments from state
-    csv_path = state.uploaded_path
-    _use_rag = state.use_rag
-    _beam_width = int(state.beam_width)
-    _max_iterations = int(state.max_iterations)
-    _proceed_k = int(state.proceed_k)
-    _metric = str(state.metric).lower()
-    _prefer_user_start = (state.start_mode == 'Provide SMILES')
-    _user_smiles = str(state.user_smiles).strip() if _prefer_user_start else None
-    
-    cancel_event = threading.Event() # Simple cancellation not fully wired in Taipy basic example yet
-    
-    result_holder = {}
-    
+def background_run(csv_path: str, use_rag: bool, beam_width: int, max_iterations: int, 
+                   proceed_k: int, result_holder: dict, cancel_event: threading.Event,
+                   error_metric: str = 'mape', prefer_user_start: bool = False, 
+                   starting_smiles: str = None):
+    """Run optimization in background thread."""
     try:
         agent = MolecularOptimizationAgent(
-            beam_width=_beam_width,
-            max_iterations=_max_iterations,
+            beam_width=beam_width,
+            max_iterations=max_iterations,
             convergence_threshold=0.01,
-            use_rag=_use_rag,
+            use_rag=use_rag,
             early_stop_patience=None,
-            proceed_k=_proceed_k,
-            error_metric=_metric,
-            cli_rag_logging=bool(_use_rag),
+            proceed_k=proceed_k,
+            error_metric=error_metric,
+            cli_rag_logging=bool(use_rag),
         )
-        # We invoke the synchronous process; 
-        # Ideally, we'd check cancel_event periodically if passed down.
-        res = agent.process_csv_input(
+        results = agent.process_csv_input(
             csv_path, 
             verbose=False, 
-            cancel_event=cancel_event, 
-            starting_smiles=_user_smiles, 
-            prefer_user_start=_prefer_user_start
+            cancel_event=cancel_event,
+            starting_smiles=starting_smiles if starting_smiles else None,
+            prefer_user_start=bool(prefer_user_start)
         )
-        return res
+        result_holder['results'] = results
+        result_holder['completed'] = True
     except Exception as e:
-        return {'error': str(e)}
-
-def on_optimization_done(state, status, result):
-    """Callback when the long-running task is finished."""
-    state.is_running = False
-    state.can_run_opt = True
-    
-    if isinstance(result, dict) and 'error' in result:
-        notify(state, 'error', f"Error: {result['error']}")
-        return
-
-    # Update state with results
-    state.results = result
-    
-    # Process results for display
-    start_smi = result.get('starting_molecule', '')
-    best_smi = result.get('best_molecule', '')
-    
-    state.start_smiles_img = smiles_to_base64_png(start_smi)
-    state.best_smiles_img = smiles_to_base64_png(best_smi)
-    
-    # Scores
-    bs = result.get('best_score')
-    bpe = result.get('best_prop_error')
-    bfs = result.get('best_feasibility_score')
-    
-    state.best_score_display = f"{bs:.6f}" if isinstance(bs, (int, float)) else "N/A"
-    state.best_prop_error_display = f"{bpe:.6f}" if isinstance(bpe, (int, float)) else "N/A"
-    state.best_feas_display = f"{bfs:.3f}" if isinstance(bfs, (int, float)) else "N/A"
-    
-    # Properties Tables
-    t_props = result.get('target_properties', {})
-    b_props = result.get('best_properties', {})
-    
-    state.target_props_data = pd.DataFrame([t_props])
-    state.best_props_data = pd.DataFrame([b_props])
-
-    # Search History (simplified for Taipy display, maybe just a summary text or table)
-    # For a rich display like Streamlit's expanders, we might need a repeater or table.
-    # Let's format a summary string or use a table for the best candidates per iteration.
-    history = result.get('search_history', [])
-    hist_summary = []
-    for entry in history:
-        it = entry.get('iteration')
-        cands = entry.get('candidates', [])
-        top_scores = ", ".join([f"{c.get('score'):.4f}" for c in cands[:3]])
-        hist_summary.append({'Iteration': it, 'Beam Size': len(cands), 'Top Scores': top_scores})
-    state.search_history_data = pd.DataFrame(hist_summary)
-
-    # RAG Trace
-    rag = result.get('rag_trace')
-    if isinstance(rag, dict):
-        trace_str = f"Query: {rag.get('query','')}\n\n"
-        trace_str += f"Retrieved {rag.get('retrieved_count',0)} articles.\n"
-        titles = rag.get('retrieved_titles') or []
-        for t in titles:
-            trace_str += f"- {t}\n"
-        state.rag_trace_display = trace_str
-    else:
-        state.rag_trace_display = "No RAG trace available."
-
-    notify(state, 'success', 'Optimization Completed!')
+        result_holder['results'] = {'error': str(e)}
+        result_holder['completed'] = True
 
 
-# --- Event Handlers ---
-
-def on_change(state, var_name, var_value):
-    if var_name == "start_mode":
-        state.prefer_user_start = (var_value == "Provide SMILES")
-
-def on_file_upload(state):
+def on_file_upload(state: State, var_name: str, value):
     """Handle CSV file upload."""
-    # Taipy handles upload via file_selector binding to a path string usually.
-    # We will check if uploaded_path is set.
-    if os.path.exists(state.uploaded_path):
-        notify(state, 'success', f'Uploaded: {os.path.basename(state.uploaded_path)}')
-    else:
-        notify(state, 'warning', 'Upload failed or file not found.')
+    if value is not None:
+        dest = os.path.join(os.getcwd(), 'uploaded_input.csv')
+        try:
+            with open(dest, 'wb') as f:
+                f.write(value.read())
+            state.uploaded_path = dest
+            notify(state, 'success', f'✓ Uploaded: {os.path.basename(dest)}')
+        except Exception as e:
+            notify(state, 'error', f'Upload failed: {str(e)}')
 
-def on_run_click(state):
-    if state.is_running:
-        return
+
+def run_optimization(state: State):
+    """Start optimization run."""
+    global worker_thread, cancel_event, result_holder
     
     if not state.uploaded_path or not os.path.exists(state.uploaded_path):
-        notify(state, 'warning', 'Please upload a CSV file first.')
+        notify(state, 'warning', '⚠ Please upload a CSV file first')
         return
-
-    notify(state, 'info', 'Starting optimization in background...')
-    state.is_running = True
-    state.can_run_opt = False
     
-    # Clear previous results
+    if state.is_running:
+        notify(state, 'info', 'Optimization already running')
+        return
+    
+    # Reset results
     state.results = None
-    state.best_smiles_img = ""
-    state.start_smiles_img = ""
-    state.best_score_display = ""
-    state.target_props_data = pd.DataFrame()
-    state.best_props_data = pd.DataFrame()
-    state.search_history_data = pd.DataFrame()
-    state.rag_trace_display = ""
+    state.show_results = False
+    state.is_running = True
+    
+    # Setup worker
+    cancel_event = threading.Event()
+    result_holder = {'completed': False}
+    
+    prefer_user_start = state.start_mode == "Provide SMILES"
+    smiles_input = state.user_smiles.strip() if prefer_user_start else None
+    
+    worker_thread = threading.Thread(
+        target=background_run,
+        args=(
+            state.uploaded_path,
+            state.use_rag,
+            int(state.beam_width),
+            int(state.max_iterations),
+            int(state.proceed_k),
+            result_holder,
+            cancel_event,
+            str(state.error_metric).lower(),
+            prefer_user_start,
+            smiles_input
+        ),
+        daemon=True
+    )
+    worker_thread.start()
+    notify(state, 'info', '🚀 Optimization running in background...')
+    
+    # Start polling
+    state.assign("poll_worker", True)
 
-    # Start long running task
-    invoke_long_callback(state, run_optimization, [state], on_optimization_done)
 
-def on_stop_click(state):
-    # Cooperative cancellation isn't trivially exposed via simple invoke_long_callback
-    # without passing a threading.Event that we can set here. 
-    # For this demo, we'll just notify.
-    notify(state, 'info', 'Stop requested (not fully implemented in demo).')
+def poll_worker(state: State):
+    """Poll worker thread status."""
+    global worker_thread, result_holder
+    
+    if not state.is_running or not worker_thread:
+        return
+    
+    if not worker_thread.is_alive():
+        state.is_running = False
+        if result_holder.get('completed'):
+            state.results = result_holder.get('results')
+            if state.results and 'error' not in state.results:
+                state.show_results = True
+                update_results_display(state)
+                notify(state, 'success', '✓ Optimization complete!')
+            elif state.results and 'error' in state.results:
+                notify(state, 'error', f'Error: {state.results["error"]}')
+        worker_thread = None
+    else:
+        # Continue polling
+        time.sleep(1)
+        state.assign("poll_worker", True)
 
-def on_reset_click(state):
+
+def update_results_display(state: State):
+    """Update the results display."""
+    if not state.results:
+        return
+    
+    results = state.results
+    
+    # Update molecule images
+    state.start_smiles_text = results.get('starting_molecule', '')
+    state.best_smiles_text = results.get('best_molecule', '')
+    state.start_mol_img = smiles_to_base64(state.start_smiles_text)
+    state.best_mol_img = smiles_to_base64(state.best_smiles_text)
+    
+    # Update properties
+    state.target_props = results.get('target_properties', {})
+    state.best_props = results.get('best_properties', {})
+    
+    # Update score
+    best_score = results.get('best_score')
+    if isinstance(best_score, (int, float)):
+        state.best_score_text = f"Best Score: {best_score:.6f}"
+    else:
+        state.best_score_text = ""
+    
+    # Update RAG info if available
+    rag_trace = results.get('rag_trace')
+    if isinstance(rag_trace, dict):
+        state.rag_info = f"RAG Query: {rag_trace.get('query', 'N/A')}"
+    else:
+        state.rag_info = ""
+
+
+def reset_all(state: State):
+    """Reset all state and clear uploaded files."""
+    global worker_thread, cancel_event
+    
+    # Cancel running optimization
+    if state.is_running and cancel_event and not cancel_event.is_set():
+        cancel_event.set()
+    
+    # Delete uploaded file
+    if state.uploaded_path and os.path.exists(state.uploaded_path):
+        try:
+            os.remove(state.uploaded_path)
+        except Exception:
+            pass
+    
+    # Reset all state
     state.uploaded_path = ""
-    state.results = None
+    state.use_rag = False
+    state.error_metric = "mape"
+    state.beam_width = 5
+    state.max_iterations = 8
+    state.proceed_k = 3
+    state.start_mode = "From samples"
+    state.user_smiles = ""
     state.is_running = False
-    state.can_run_opt = True
-    state.start_smiles_img = ""
-    state.best_smiles_img = ""
-    state.best_score_display = ""
-    state.target_props_data = pd.DataFrame()
-    state.best_props_data = pd.DataFrame()
-    state.search_history_data = pd.DataFrame()
-    state.rag_trace_display = ""
-    notify(state, 'success', 'Reset complete.')
+    state.results = None
+    state.show_results = False
+    state.start_mol_img = ""
+    state.best_mol_img = ""
+    state.best_score_text = ""
+    state.target_props = {}
+    state.best_props = {}
+    
+    notify(state, 'success', '✓ Reset complete')
 
-# --- Layout (Markdown) ---
 
+# Define the page layout with modern design
 page = """
-# EnergeticGraph **Optimizer**
+<|container|
+# ⚗️ EnergeticGraph Optimizer
 
-Design and optimize energetic molecules. Upload a CSV, configure search, and run the optimizer.
+Design and optimize energetic molecules with AI-powered beam search
 
-<|layout|columns=300px 1|
-    <|part|class_name=sidebar|
-        ### Input & Settings
+<|layout|columns=300px 1fr|gap=2rem|
 
-        **Upload CSV**
-        <|{uploaded_path}|file_selector|label=Upload CSV|extensions=.csv|on_action=on_file_upload|>
+<|part|class_name=sidebar|
+## Configuration
 
-        <|{use_rag}|toggle|label=Use RAG|>
-        
-        **Error Metric**
-        <|{metric}|selector|lov=mape;mse|dropdown|>
+**Upload CSV File**
 
-        **Beam Width**
-        <|{beam_width}|number|min=1|max=30|>
+<|{uploaded_file}|file_selector|on_action=on_file_upload|extensions=.csv|label=Choose CSV|>
 
-        **Max Iterations**
-        <|{max_iterations}|number|min=1|max=100|>
+**Use RAG**
 
-        **Proceed (k)**
-        <|{proceed_k}|number|min=1|max=30|>
+<|{use_rag}|toggle|>
 
-        ---
-        **Starting Molecule**
-        <|{start_mode}|selector|lov=From samples;Provide SMILES|mode=radio|>
-        
-        <|{user_smiles}|input|label=Starting SMILES|active={prefer_user_start}|>
+**Error Metric**
 
-        <|Run Optimization|button|on_action=on_run_click|active={can_run_opt}|class_name=primary|>
-        <|Stop|button|on_action=on_stop_click|active={is_running}|>
-        <|Reset|button|on_action=on_reset_click|>
-        
-        <|{is_running}|indicator|value={is_running}|label=Running...|>
-    |>
+<|{error_metric}|selector|lov=mape;mse|dropdown|>
 
-    <|part|
-        ## Optimization Results
+**Beam Width**
 
-        <|layout|columns=1 1|
-            <|part|
-                ### Starting Molecule
-                <|{start_smiles_img}|image|width=300px|>
-            |>
-            <|part|
-                ### Best Molecule
-                <|{best_smiles_img}|image|width=300px|>
-            |>
-        |>
+<|{beam_width}|number|min=1|max=30|>
 
-        <|layout|columns=1 1|
-            <|part|
-                **Target Properties**
-                <|{target_props_data}|table|>
-            |>
-            <|part|
-                **Best Molecule Properties**
-                <|{best_props_data}|table|>
-            |>
-        |>
+**Max Iterations**
 
-        ### Score Summary
-        **Best Score ({metric}):** <|{best_score_display}|text|>
-        
-        **Components:** Prop Error: <|{best_prop_error_display}|text|> | Feasibility: <|{best_feas_display}|text|>
+<|{max_iterations}|number|min=1|max=100|>
 
-        ---
-        ### Search History Summary
-        <|{search_history_data}|table|>
+**Proceeding Candidates (k)**
 
-        ### RAG Trace
-        <|{rag_trace_display}|text|mode=pre|>
-    |>
+<|{proceed_k}|number|min=1|max=30|>
+
+**Starting Molecule**
+
+<|{start_mode}|selector|lov=From samples;Provide SMILES|dropdown|>
+
+<|{start_mode == "Provide SMILES"}|part|
+**Starting SMILES**
+
+<|{user_smiles}|input|>
+|>
+
+<|Run Optimization|button|on_action=run_optimization|class_name=btn-primary|>
+
+<|Reset All|button|on_action=reset_all|class_name=btn-secondary|>
+|>
+
+<|part|class_name=results-area|
+
+<|{is_running}|part|
+### 🔬 Optimization in Progress...
+
+Running molecular beam search. Results will appear when complete.
+|>
+
+<|{not is_running and not show_results}|part|
+### Ready to Optimize
+
+Upload a CSV file and configure your optimization parameters to get started.
+|>
+
+<|{show_results and results}|part|
+## ✨ Optimization Results
+
+**{best_score_text}**
+
+<|layout|columns=1fr 1fr|gap=2rem|
+
+<|part|class_name=mol-card|
+### Starting Molecule
+
+<|{start_mol_img}|image|>
+
+`{start_smiles_text}`
+|>
+
+<|part|class_name=mol-card|
+### Best Molecule
+
+<|{best_mol_img}|image|>
+
+`{best_smiles_text}`
+|>
+
+|>
+
+<|layout|columns=1fr 1fr|gap=2rem|
+
+<|part|
+### 🎯 Target Properties
+
+<|{target_props}|table|>
+|>
+
+<|part|
+### 📊 Best Molecule Properties
+
+<|{best_props}|table|>
+|>
+
+|>
+
+<|{rag_info != ""}|part|
+**{rag_info}**
+|>
+
+|>
+
+|>
+
+|>
+
 |>
 """
 
-if __name__ == "__main__":
-    Gui(page=page).run(title="EnergeticGraph Optimizer", use_reloader=True)
+# CSS styling
+css = """
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap');
 
+* {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+body {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+    background-attachment: fixed;
+}
+
+.sidebar {
+    background: rgba(255, 255, 255, 0.98);
+    border-radius: 20px;
+    padding: 2rem;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+}
+
+.results-area {
+    background: rgba(255, 255, 255, 0.98);
+    border-radius: 20px;
+    padding: 2.5rem;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+    min-height: 400px;
+}
+
+.mol-card {
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    border-radius: 16px;
+    padding: 1.5rem;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+}
+
+.mol-card img {
+    width: 100%;
+    border-radius: 12px;
+    background: white;
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+    color: white !important;
+    border: none !important;
+    padding: 0.9rem 1.5rem !important;
+    border-radius: 12px !important;
+    font-weight: 700 !important;
+    margin-top: 1rem !important;
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4) !important;
+    width: 100% !important;
+}
+
+.btn-secondary {
+    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%) !important;
+    color: white !important;
+    border: none !important;
+    padding: 0.9rem 1.5rem !important;
+    border-radius: 12px !important;
+    font-weight: 700 !important;
+    margin-top: 0.8rem !important;
+    box-shadow: 0 4px 15px rgba(245, 87, 108, 0.3) !important;
+    width: 100% !important;
+}
+
+h1 {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    font-weight: 800;
+}
+
+input[type="number"],
+select {
+    width: 100%;
+    padding: 0.8rem;
+    border: 2px solid #e2e8f0;
+    border-radius: 10px;
+    transition: all 0.2s ease;
+}
+
+input[type="number"]:focus,
+select:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+"""
+
+if __name__ == '__main__':
+    gui = Gui(page=page, css_file=None)
+    gui.run(
+        title="EnergeticGraph Optimizer",
+        port=5001,  # Changed to 5001 to avoid conflict
+        dark_mode=False,
+        use_reloader=False,
+        stylekit={
+            "color_primary": "#667eea",
+            "color_secondary": "#764ba2"
+        }
+    )

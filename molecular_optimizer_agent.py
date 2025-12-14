@@ -169,14 +169,25 @@ class MolecularOptimizationAgent:
         e0 = min(energies.values()) if energies else 0.0
         return {cid: energies[cid] - e0 for cid in cids}
 
-    def _ersatz_sa_score(self, mol) -> float:
-        from rdkit.Chem import rdMolDescriptors as _rdd
-        rings = _rdd.CalcNumRings(mol)
-        spiro = _rdd.CalcNumSpiroAtoms(mol)
-        bridged = _rdd.CalcNumBridgeheadAtoms(mol)
-        size = mol.GetNumAtoms()
-        heteros = sum(1 for a in mol.GetAtoms() if a.GetAtomicNum() not in (1, 6))
-        return min(10.0, 1.5 + 0.03 * size + 0.6 * rings + 0.8 * spiro + 0.8 * bridged + 0.2 * heteros)
+    def _calculate_sa_score(self, mol) -> float:
+        """Calculate synthetic accessibility score using RDKit's official SAScore (1=easy, 10=hard)."""
+        try:
+            from rdkit.Chem import RDKitConfig
+            import sys, os
+            contrib_dir = os.path.join(RDKitConfig.RDContribDir, 'SA_Score')
+            if contrib_dir not in sys.path:
+                sys.path.append(contrib_dir)
+            import sascorer
+            return float(sascorer.calculateScore(mol))
+        except Exception:
+            # Fallback to ersatz if SAScore unavailable
+            from rdkit.Chem import rdMolDescriptors as _rdd
+            rings = _rdd.CalcNumRings(mol)
+            spiro = _rdd.CalcNumSpiroAtoms(mol)
+            bridged = _rdd.CalcNumBridgeheadAtoms(mol)
+            size = mol.GetNumAtoms()
+            heteros = sum(1 for a in mol.GetAtoms() if a.GetAtomicNum() not in (1, 6))
+            return min(10.0, 1.5 + 0.03 * size + 0.6 * rings + 0.8 * spiro + 0.8 * bridged + 0.2 * heteros)
 
     def _count_alerts(self, mol) -> int:
         from rdkit.Chem.FilterCatalog import FilterCatalog, FilterCatalogParams
@@ -261,7 +272,7 @@ class MolecularOptimizationAgent:
             mol, cids = self._smiles_to_mol_3d(smiles, n_confs)
         except Exception:
             return None
-        sa = self._ersatz_sa_score(mol)
+        sa = self._calculate_sa_score(mol)
         alerts = self._count_alerts(mol)
         logp = _Crippen.MolLogP(mol)
         tpsa = _rdd.CalcTPSA(mol)
@@ -272,37 +283,15 @@ class MolecularOptimizationAgent:
         strains = [strain[c] for c in cids] if cids else [0.0]
         strain_min = float(min(strains))
         strain_p95 = float(_np.percentile(strains, 95)) if len(strains) > 1 else strain_min
-        try:
-            atoms0 = self._molconf_to_ase_atoms(mol, cids[0] if cids else mol.GetConformer().GetId())
-        except Exception:
-            atoms0 = None
-        IP, EA = 0.0, 0.0
-        if atoms0 is not None:
-            try:
-                IP, EA = self._ip_ea_kcal(atoms0)
-            except Exception:
-                IP, EA = 0.0, 0.0
-        mu, eta, omega = self._hardness_electrophilicity(IP, EA)
-        bonds = self._candidate_bonds(mol)[:8]
-        min_bde = float('inf')
-        if atoms0 is not None:
-            for b in bonds:
-                try:
-                    bde = self._bde_vertical_kcal(mol, atoms0, b)
-                    if bde < min_bde:
-                        min_bde = bde
-                except Exception:
-                    continue
-        if min_bde == float('inf'):
-            min_bde = 0.0
+        # Fast SAScore-based feasibility calculation (removed slow xTB IP/EA/BDE)
+        # Calculate composite feasibility score (0-1, higher is better)
         s = 1.0
-        s -= 0.06 * max(0, sa - 3.0)
-        s -= 0.15 * min(alerts, 2)
-        s -= 0.02 * max(0.0, strain_p95 - 2.0)
-        s -= 0.04 * max(0.0, (5.0 - min_bde) / 5.0)
-        s -= 0.02 * small_rings
-        s -= 0.01 * max(0, rotb - 8)
-        s += 0.005 * min(20.0, eta) / 10.0
+        # Main penalty from SAScore: if sa > 6.0, molecule is too hard to synthesize
+        s -= 0.4 * max(0, sa - 6.0)  # Heavy penalty for SAScore > 6
+        s -= 0.15 * min(alerts, 2)  # Structural alerts
+        s -= 0.02 * max(0.0, strain_p95 - 2.0)  # MMFF strain
+        s -= 0.02 * small_rings  # 3-4 membered rings
+        s -= 0.01 * max(0, rotb - 8)  # Excessive rotatable bonds
         s = max(0.0, min(1.0, s))
         # MMFF-only feasibility (0..1) from strain (use same baseline and slope as composite penalty)
         strain_only_feas = max(0.0, min(1.0, 1.0 - 0.02 * max(0.0, strain_p95 - 2.0)))
@@ -312,11 +301,11 @@ class MolecularOptimizationAgent:
             mmff_strain_min=round(strain_min, 2),
             mmff_strain_p95=round(strain_p95, 2),
             mmff_strain_score_0_1=round(strain_only_feas, 3),
-            ip_kcal=round(IP, 2),
-            ea_kcal=round(EA, 2),
-            hardness_kcal=round(eta, 2),
-            electrophilicity_kcal=round(omega, 2),
-            min_bde_kcal=round(min_bde, 2),
+            ip_kcal=0.0,  # No longer calculated (removed xTB)
+            ea_kcal=0.0,  # No longer calculated (removed xTB)
+            hardness_kcal=0.0,  # No longer calculated (removed xTB)
+            electrophilicity_kcal=0.0,  # No longer calculated (removed xTB)
+            min_bde_kcal=0.0,  # No longer calculated (removed xTB)
             logp=round(logp, 2),
             tpsa=round(tpsa, 2),
             small_ring_count=int(small_rings),

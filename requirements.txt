@@ -75,8 +75,12 @@ flake8
 tblite
 ase
 
-# Streamlit GUI
+# GUI Options
 streamlit
+taipy>=3.1
+nicegui
+flask
+flask-socketio
 
 # Web utils
 requests
