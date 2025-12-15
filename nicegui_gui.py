@@ -7,7 +7,8 @@ from nicegui import ui
 from nicegui.events import UploadEventArguments
 from rdkit import Chem
 from rdkit.Chem import Draw
-from molecular_optimizer_agent import MolecularOptimizationAgent
+from molecular_optimizer import MolecularOptimizationAgent
+
 
 
 def smiles_to_data_uri(smiles: str, width: int = 250, height: int = 200) -> str:

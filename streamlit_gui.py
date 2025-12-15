@@ -9,7 +9,8 @@ from io import BytesIO
 import streamlit as st
 from rdkit import Chem
 from rdkit.Chem import Draw
-from molecular_optimizer_agent import MolecularOptimizationAgent
+from molecular_optimizer import MolecularOptimizationAgent
+
 
 
 def smiles_to_png_bytes(smiles: str, width: int = 300, height: int = 220) -> bytes:

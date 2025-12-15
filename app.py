@@ -8,7 +8,10 @@ import base64
 from io import BytesIO
 from rdkit import Chem
 from rdkit.Chem import Draw
-from molecular_optimizer_agent import MolecularOptimizationAgent
+
+# Use new modular package
+from molecular_optimizer import MolecularOptimizationAgent
+
 
 # Ensure Transformers does not try to import TensorFlow/Keras
 os.environ.setdefault("TRANSFORMERS_NO_TF", "1")

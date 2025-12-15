@@ -7,7 +7,8 @@ from io import BytesIO
 from taipy.gui import Gui, State, notify
 from rdkit import Chem
 from rdkit.Chem import Draw
-from molecular_optimizer_agent import MolecularOptimizationAgent
+from molecular_optimizer import MolecularOptimizationAgent
+
 
 
 # Ensure Transformers does not try to import TensorFlow/Keras (avoids Keras 3 error)
