@@ -63,19 +63,35 @@ class ScoringCalculator:
         property_error: float,
         feasibility: Optional[FeasibilityReport]
     ) -> float:
-        """Calculate combined score for candidate ranking.
+        """Calculate combined score that minimizes MAPE and maximizes feasibility.
         
-        Note: Feasibility is enforced via threshold filter elsewhere,
-        so we just return property error for ranking.
+        Multi-objective optimization:
+        - Minimize property error (MAPE/MSE) - 70% weight
+        - Maximize feasibility (synthetic accessibility) - 30% weight
         
         Args:
             property_error: Property error (MAPE or MSE)
-            feasibility: Feasibility report (not used in scoring, just for filtering)
+            feasibility: Feasibility report
         
         Returns:
-            Combined score (lower is better) - currently just property error
+            Combined score (lower is better) - weighted sum for beam search minimization
         """
-        return float(property_error)
+        if feasibility is None:
+            return 999.0  # Very bad score if no feasibility
+        
+        # Get feasibility score (0-1, higher is better)
+        feas_score = feasibility.composite_score_0_1
+        
+        # Normalize property error to 0-1 range
+        norm_prop_error = min(property_error, 1.0)
+        
+        # Invert feasibility for minimization (higher feasibility → lower score)
+        inverted_feas = 1.0 - feas_score
+        
+        # Weighted combination: 70% property error, 30% feasibility
+        combined = 0.7 * norm_prop_error + 0.3 * inverted_feas
+        
+        return float(combined)
     
     def feasibility_to_dict(
         self,

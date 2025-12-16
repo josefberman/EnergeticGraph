@@ -1,17 +1,20 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="EnergeticGraph Optimizer - AI-powered molecular design">
     <title>EnergeticGraph Optimizer</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800;900&display=swap"
+        rel="stylesheet">
 </head>
+
 <body>
     <!-- Animated Background -->
     <div class="background-animation"></div>
-    
+
     <!-- Main Container -->
     <div class="container">
         <!-- Header -->
@@ -32,7 +35,7 @@
             <!-- Control Panel -->
             <aside class="control-panel glass-card">
                 <h2 class="panel-title">Configuration</h2>
-                
+
                 <!-- File Upload -->
                 <div class="upload-section">
                     <div class="upload-zone" id="uploadZone">
@@ -55,13 +58,7 @@
                         </label>
                     </div>
 
-                    <div class="setting-item">
-                        <label class="setting-label" for="errorMetric">Error Metric</label>
-                        <select id="errorMetric" class="custom-select">
-                            <option value="mape">MAPE</option>
-                            <option value="mse">MSE</option>
-                        </select>
-                    </div>
+                    <!-- Error Metric removed - always using MAPE for combined score -->
 
                     <div class="setting-item">
                         <label class="setting-label" for="beamWidth">Beam Width</label>
@@ -88,7 +85,8 @@
 
                     <div class="setting-item hidden" id="smilesInputGroup">
                         <label class="setting-label" for="customSmiles">Starting SMILES</label>
-                        <input type="text" id="customSmiles" class="custom-input" placeholder="e.g., CC1=CC=C(C=C1)[N+](=O)[O-]">
+                        <input type="text" id="customSmiles" class="custom-input"
+                            placeholder="e.g., CC1=CC=C(C=C1)[N+](=O)[O-]">
                     </div>
                 </div>
 
@@ -187,4 +185,5 @@
     <!-- Main JavaScript -->
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
+
 </html>

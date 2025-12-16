@@ -338,8 +338,35 @@ class MolecularOptimizationAgent:
         return (weighted_sum / total_weight) if total_weight > 0 else weighted_sum
 
     def calculate_combined_score(self, property_error: float, feasibility: Optional['MolecularOptimizationAgent.FeasibilityReport']) -> float:
-        """Return property error only (MAPE/MSE). Feasibility is enforced via threshold filter elsewhere."""
-        return float(property_error)
+        """Calculate combined score that minimizes MAPE and maximizes feasibility.
+        
+        Multi-objective optimization:
+        - Minimize property error (MAPE/MSE)
+        - Maximize feasibility (synthetic accessibility)
+        
+        Returns lower score for better molecules (for minimization in beam search).
+        """
+        if feasibility is None:
+            # No feasibility info → very bad score
+            return 999.0
+        
+        # Get feasibility score (0-1, higher is better)
+        feas_score = feasibility.composite_score_0_1
+        
+        # Combined score: weighted sum of property error and inverted feasibility
+        # Weight property error more (70%) vs feasibility (30%)
+        # This balances finding good properties while maintaining synthesizability
+        
+        # Normalize property error to 0-1 range (assuming MAPE < 100%)
+        norm_prop_error = min(property_error, 1.0)  # Cap at 100% error
+        
+        # Invert feasibility so higher feasibility → lower score (for minimization)
+        inverted_feas = 1.0 - feas_score
+        
+        # Weighted combination (lower is better)
+        combined = 0.7 * norm_prop_error + 0.3 * inverted_feas
+        
+        return float(combined)
 
     def _feasibility_to_public_dict(self, feas: Optional['MolecularOptimizationAgent.FeasibilityReport']) -> Optional[Dict[str, Any]]:
         """Return feasibility fields for reporting, including composite_score_0_1."""

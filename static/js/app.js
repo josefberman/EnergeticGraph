@@ -2,7 +2,7 @@
 let socket;
 let isRunning = false;
 let statusCheckInterval = null;
-let currentErrorMetric = 'mape'; // Track current error metric
+// Always use MAPE for property error in combined score
 
 // ===== DOM ELEMENTS =====
 const elements = {
@@ -11,9 +11,8 @@ const elements = {
     fileInput: document.getElementById('fileInput'),
     uploadedFileName: document.getElementById('uploadedFileName'),
 
-    // Settings
+    // Settings (errorMetric removed - always MAPE)
     useRAG: document.getElementById('useRAG'),
-    errorMetric: document.getElementById('errorMetric'),
     beamWidth: document.getElementById('beamWidth'),
     maxIterations: document.getElementById('maxIterations'),
     proceedK: document.getElementById('proceedK'),
@@ -169,12 +168,11 @@ async function uploadFile(file) {
 async function handleRun() {
     if (isRunning) return;
 
-    // Store current error metric
-    currentErrorMetric = elements.errorMetric.value;
+    // Always use MAPE for combined score calculation
 
     const config = {
         use_rag: elements.useRAG.checked,
-        error_metric: currentErrorMetric,
+        error_metric: 'mape',  // Always use MAPE for combined score
         beam_width: parseInt(elements.beamWidth.value),
         max_iterations: parseInt(elements.maxIterations.value),
         proceed_k: parseInt(elements.proceedK.value),
@@ -251,10 +249,8 @@ function displayResults(data) {
     let scoreHtml = '';
     if (data.best_score !== null && data.best_score !== undefined) {
         // Format score based on metric type
-        const formattedScore = currentErrorMetric === 'mape'
-            ? `${(data.best_score * 100).toFixed(2)}%`
-            : data.best_score.toFixed(6);
-        const metricLabel = currentErrorMetric === 'mape' ? 'MAPE' : 'MSE';
+        const formattedScore = `${(data.best_score * 100).toFixed(2)}%`;  // Always percentage (combined score)
+        const metricLabel = 'Combined Score';  // Always show combined score (MAPE + Feasibility)
         scoreHtml = `<div class="score-main">Best ${metricLabel}: ${formattedScore}</div>`;
 
         const components = [];
@@ -328,7 +324,7 @@ function createIterationHistory(history) {
                 <img src="${c.image}" alt="Candidate molecule">
                 <div class="candidate-smiles">${c.smiles.substring(0, 60)}${c.smiles.length > 60 ? '...' : ''}</div>
                 ${c.feasibility_score !== null ? `<div class="candidate-metric">Feasibility: <strong>${c.feasibility_score.toFixed(3)}</strong></div>` : ''}
-                ${formattedError !== null ? `<div class="candidate-metric">Error (${currentErrorMetric.toUpperCase()}): <strong>${formattedError}</strong></div>` : ''}
+                ${formattedError !== null ? `<div class="candidate-metric">Combined Score: <strong>${formattedError}</strong></div>` : ''}
             </div>
         `;
         }).join('');
