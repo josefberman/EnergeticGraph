@@ -1,0 +1,634 @@
+/* Modern Dark Theme for Molecular Design System */
+
+/* Import Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+    /* Colors */
+    --bg-primary: #1a1d2e;
+    --bg-secondary: #252a42;
+    --bg-tertiary: #2d3350;
+    --bg-card: rgba(37, 42, 66, 0.6);
+    --bg-input: rgba(45, 51, 80, 0.8);
+
+    /* Gradients */
+    --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    --gradient-cyan: linear-gradient(135deg, #00d4ff 0%, #0099ff 100%);
+    --gradient-success: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+    --gradient-card: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+
+    /* Text */
+    --text-primary: #ffffff;
+    --text-secondary: #a5b4fc;
+    --text-muted: #8892b0;
+
+    /* Accents */
+    --accent-cyan: #00d4ff;
+    --accent-purple: #667eea;
+    --accent-green: #38ef7d;
+
+    /* Shadows */
+    --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.1);
+    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.2);
+    --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.3);
+    --shadow-glow: 0 0 20px rgba(102, 126, 234, 0.3);
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    line-height: 1.6;
+    overflow-x: hidden;
+}
+
+.container {
+    max-width: 1800px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+/* Header */
+.header {
+    text-align: center;
+    margin-bottom: 3rem;
+}
+
+.title {
+    font-size: 3rem;
+    font-weight: 700;
+    background: var(--gradient-cyan);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 0.5rem;
+}
+
+.subtitle {
+    color: var(--text-secondary);
+    font-size: 1.1rem;
+    font-weight: 500;
+}
+
+/* Main Grid Layout */
+.main-grid {
+    display: grid;
+    grid-template-columns: 350px 1fr 400px;
+    grid-template-rows: auto auto 1fr;
+    gap: 1.5rem;
+    min-height: calc(100vh - 200px);
+}
+
+.input-panel {
+    grid-row: 1 / -1;
+}
+
+.center-panel {
+    grid-row: 1 / -1;
+}
+
+.molecule-panel {
+    grid-column: 3;
+}
+
+.target-panel {
+    grid-column: 3;
+}
+
+.best-panel {
+    grid-column: 3;
+}
+
+/* Panel Styling */
+.panel {
+    background: var(--bg-card);
+    backdrop-filter: blur(10px);
+    border-radius: 16px;
+    padding: 1.5rem;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: var(--shadow-md);
+}
+
+.panel-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 1.5rem;
+    color: var(--text-primary);
+    border-left: 3px solid var(--accent-cyan);
+    padding-left: 1rem;
+}
+
+/* Input Groups */
+.input-group {
+    margin-bottom: 1.5rem;
+}
+
+.input-group label {
+    display: block;
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-bottom: 0.5rem;
+}
+
+.input-group input[type="number"] {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    background: var(--bg-input);
+    border: 1px solid rgba(102, 126, 234, 0.3);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 1rem;
+    transition: all 0.3s ease;
+}
+
+.input-group input[type="number"]:focus {
+    outline: none;
+    border-color: var(--accent-cyan);
+    box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.1);
+}
+
+/* Toggle Switch */
+.toggle-group {
+    margin: 2rem 0;
+}
+
+.toggle-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+}
+
+.toggle-label input[type="checkbox"] {
+    display: none;
+}
+
+.toggle-switch {
+    position: relative;
+    width: 52px;
+    height: 28px;
+    background: var(--bg-tertiary);
+    border-radius: 14px;
+    transition: all 0.3s ease;
+}
+
+.toggle-switch::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 22px;
+    height: 22px;
+    background: white;
+    border-radius: 50%;
+    transition: all 0.3s ease;
+}
+
+.toggle-label input[type="checkbox"]:checked+.toggle-switch {
+    background: var(--gradient-cyan);
+}
+
+.toggle-label input[type="checkbox"]:checked+.toggle-switch::after {
+    transform: translateX(24px);
+}
+
+/* Run Button */
+.run-button {
+    width: 100%;
+    padding: 1rem;
+    background: var(--gradient-primary);
+    border: none;
+    border-radius: 12px;
+    color: white;
+    font-size: 1.1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: var(--shadow-glow);
+    position: relative;
+    overflow: hidden;
+}
+
+.run-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 0 30px rgba(102, 126, 234, 0.5);
+}
+
+.run-button:active {
+    transform: translateY(0);
+}
+
+.run-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.button-loader {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 3px solid rgba(255, 255, 255, 0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Status Message */
+.status-message {
+    margin-top: 1rem;
+    padding: 0.75rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    text-align: center;
+    display: none;
+}
+
+.status-message.info {
+    display: block;
+    background: rgba(0, 212, 255, 0.1);
+    border: 1px solid rgba(0, 212, 255, 0.3);
+    color: var(--accent-cyan);
+}
+
+.status-message.error {
+    display: block;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #ef4444;
+}
+
+/* Progress Stats */
+.progress-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+.stat-card {
+    background: var(--bg-secondary);
+    padding: 1rem;
+    border-radius: 12px;
+    text-align: center;
+    border: 1px solid rgba(102, 126, 234, 0.2);
+}
+
+.stat-label {
+    display: block;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-bottom: 0.5rem;
+}
+
+.stat-value {
+    display: block;
+    font-size: 1.8rem;
+    font-weight: 700;
+    background: var(--gradient-cyan);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+/* Candidates Container */
+.candidates-container {
+    max-height: calc(100vh - 400px);
+    overflow-y: auto;
+    padding-right: 0.5rem;
+}
+
+.candidates-container::-webkit-scrollbar {
+    width: 6px;
+}
+
+.candidates-container::-webkit-scrollbar-track {
+    background: var(--bg-tertiary);
+    border-radius: 3px;
+}
+
+.candidates-container::-webkit-scrollbar-thumb {
+    background: var(--accent-purple);
+    border-radius: 3px;
+}
+
+.iteration-row {
+    margin-bottom: 2rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid rgba(102, 126, 234, 0.2);
+}
+
+.iteration-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.iteration-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.iteration-stats {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
+.candidates-scroll {
+    display: flex;
+    gap: 1rem;
+    overflow-x: auto;
+    padding: 0.5rem 0 1rem 0;
+    scroll-behavior: smooth;
+}
+
+.candidates-scroll::-webkit-scrollbar {
+    height: 6px;
+}
+
+.candidates-scroll::-webkit-scrollbar-track {
+    background: var(--bg-tertiary);
+    border-radius: 3px;
+}
+
+.candidates-scroll::-webkit-scrollbar-thumb {
+    background: var(--accent-cyan);
+    border-radius: 3px;
+}
+
+.candidate-card {
+    min-width: 160px;
+    max-width: 160px;
+    background: var(--bg-secondary);
+    border-radius: 12px;
+    padding: 0.75rem;
+    border: 2px solid rgba(102, 126, 234, 0.2);
+    transition: all 0.3s ease;
+    cursor: pointer;
+    position: relative;
+    flex-shrink: 0;
+}
+
+.candidate-card:hover {
+    transform: translateY(-4px);
+    border-color: var(--accent-cyan);
+    box-shadow: 0 4px 12px rgba(0, 212, 255, 0.3);
+}
+
+.candidate-card.selected {
+    border-color: var(--accent-green);
+    background: linear-gradient(135deg, rgba(17, 153, 142, 0.15), rgba(56, 239, 125, 0.15));
+    box-shadow: 0 0 20px rgba(56, 239, 125, 0.3);
+}
+
+.candidate-card.selected::before {
+    content: '✓';
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    width: 24px;
+    height: 24px;
+    background: var(--accent-green);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 0.9rem;
+    box-shadow: 0 2px 8px rgba(56, 239, 125, 0.5);
+}
+
+.candidate-img {
+    width: 100%;
+    height: 120px;
+    object-fit: contain;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    margin-bottom: 0.5rem;
+}
+
+.candidate-score {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--accent-cyan);
+    text-align: center;
+    margin-bottom: 0.25rem;
+}
+
+.candidate-feasibility {
+    display: inline-block;
+    width: 100%;
+    text-align: center;
+    padding: 0.25rem 0.5rem;
+    background: rgba(56, 239, 125, 0.2);
+    border-radius: 4px;
+    font-size: 0.75rem;
+    color: var(--accent-green);
+}
+
+/* Candidate Popup */
+.candidate-popup {
+    position: fixed;
+    background: var(--bg-card);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(102, 126, 234, 0.3);
+    border-radius: 12px;
+    padding: 1rem;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    z-index: 1000;
+    min-width: 250px;
+    max-width: 350px;
+    display: none;
+}
+
+.candidate-popup.show {
+    display: block;
+    animation: fadeIn 0.2s ease;
+}
+
+.popup-header {
+    font-weight: 600;
+    font-size: 0.95rem;
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid rgba(102, 126, 234, 0.2);
+    color: var(--text-primary);
+}
+
+.popup-section {
+    margin-bottom: 0.75rem;
+}
+
+.popup-label {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-bottom: 0.25rem;
+}
+
+.popup-value {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.popup-properties {
+    display: grid;
+    gap: 0.5rem;
+}
+
+.popup-prop-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.85rem;
+}
+
+.popup-prop-label {
+    color: var(--text-secondary);
+}
+
+.popup-prop-value {
+    font-weight: 600;
+    color: var(--accent-cyan);
+}
+
+.candidates-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+/* Molecule Card */
+.molecule-card {
+    text-align: center;
+}
+
+.molecule-img {
+    width: 100%;
+    max-width: 300px;
+    height: auto;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    padding: 1rem;
+    margin: 0 auto 1rem;
+}
+
+.properties-grid {
+    display: grid;
+    gap: 0.75rem;
+}
+
+.property-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.75rem;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    border-left: 3px solid var(--accent-cyan);
+}
+
+.property-label {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+.property-value {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.score-badge {
+    display: inline-block;
+    padding: 0.5rem 1rem;
+    background: var(--gradient-success);
+    border-radius: 20px;
+    font-weight: 600;
+    font-size: 1.1rem;
+    margin: 1rem 0;
+}
+
+.feasibility-badge {
+    display: inline-block;
+    padding: 0.4rem 0.8rem;
+    background: rgba(56, 239, 125, 0.2);
+    border: 1px solid var(--accent-green);
+    border-radius: 16px;
+    font-size: 0.9rem;
+    color: var(--accent-green);
+    margin: 0.5rem 0;
+}
+
+/* Empty State */
+.empty-state {
+    text-align: center;
+    padding: 3rem 1rem;
+    color: var(--text-muted);
+}
+
+.empty-icon {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    opacity: 0.5;
+}
+
+/* Divider */
+.divider {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(102, 126, 234, 0.3), transparent);
+    margin: 1.5rem 0;
+}
+
+/* Animations */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.fade-in {
+    animation: fadeIn 0.5s ease;
+}
+
+/* Responsive */
+@media (max-width: 1400px) {
+    .main-grid {
+        grid-template-columns: 320px 1fr 350px;
+    }
+}
+
+@media (max-width: 1200px) {
+    .main-grid {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto;
+    }
+
+    .input-panel,
+    .center-panel,
+    .molecule-panel,
+    .target-panel,
+    .best-panel {
+        grid-row: auto;
+        grid-column: 1;
+    }
+}
