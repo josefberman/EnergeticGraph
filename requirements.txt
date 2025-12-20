@@ -15,11 +15,11 @@ scikit-learn>=1.3.0
 langchain>=0.1.0
 langchain-openai>=0.0.5
 langchain-community>=0.0.20
-langchain-experimental>=0.0.50
 openai>=1.10.0
+arxiv>=2.0.0
 
-# Vector Database
-chromadb>=0.4.22
+# Vector Database (using FAISS instead of ChromaDB for better stability)
+faiss-cpu>=1.7.4
 
 # Optional (for enhanced features)
 statsmodels>=0.14.0

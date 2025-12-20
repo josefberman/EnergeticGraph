@@ -6,10 +6,10 @@ import os
 import json
 import logging
 from typing import List
-from .data_structures import MoleculeState, PropertyTarget
-from .config import Config
-from .modules.initialization import load_dataset, find_closest_match
-from .orchestrator import BeamSearchEngine
+from data_structures import MoleculeState, PropertyTarget
+from config import Config
+from modules.initialization import load_dataset, find_closest_match
+from orchestrator import BeamSearchEngine
 
 logger = logging.getLogger(__name__)
 

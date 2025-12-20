@@ -7,8 +7,8 @@ import logging
 from typing import List, Dict, Optional
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_community.document_loaders import ArxivLoader
-from langchain_community.vectorstores import Chroma
-from langchain_experimental.text_splitter import SemanticChunker
+from langchain_community.vectorstores import FAISS
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import Document
 
 from .modification_tools import apply_all_modifications
@@ -121,44 +121,53 @@ class RAGModificationStrategy:
             logger.error(f"Error searching Arxiv: {e}")
             return []
     
-    def chunk_and_embed_papers(self, papers: List[Document]) -> Optional[Chroma]:
+    def chunk_and_embed_papers(self, papers: List[Document]) -> Optional[FAISS]:
         """
-        Chunk papers and create vector store.
+        Chunk papers and create vector store using FAISS.
         
         Args:
             papers: List of paper documents
             
         Returns:
-            Chroma vectorstore
+            FAISS vectorstore
         """
         if not papers:
             return None
         
         try:
-            # Use SemanticChunker for intelligent splitting
-            text_splitter = SemanticChunker(
-                embeddings=self.embeddings,
-                breakpoint_threshold_type="percentile"
+            # Use RecursiveCharacterTextSplitter for consistent chunking
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=1000,
+                chunk_overlap=200,
+                length_function=len
             )
             
             # Split documents
             chunks = text_splitter.split_documents(papers)
             logger.info(f"Split papers into {len(chunks)} chunks")
             
-            # Create vector store
-            vectorstore = Chroma.from_documents(
-                documents=chunks,
-                embedding=self.embeddings,
-                persist_directory=self.config.chroma_persist_directory
-            )
-            
-            return vectorstore
+            # Create FAISS vector store (much more stable than ChromaDB)
+            try:
+                logger.info(f"Creating FAISS vectorstore with {len(chunks)} chunks...")
+                vectorstore = FAISS.from_documents(
+                    documents=chunks,
+                    embedding=self.embeddings
+                )
+                logger.info(f"Successfully created FAISS vectorstore")
+                return vectorstore
+            except Exception as ve:
+                logger.error(f"FAISS creation failed: {ve}")
+                import traceback
+                logger.error(traceback.format_exc())
+                return None
         
         except Exception as e:
             logger.error(f"Error chunking and embedding papers: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return None
     
-    def query_rag_system(self, question: str, vectorstore: Chroma, k: int = 5) -> str:
+    def query_rag_system(self, question: str, vectorstore: FAISS, k: int = 5) -> str:
         """
         Query the RAG system for relevant context.
         
@@ -232,7 +241,7 @@ Be specific and chemistry-focused, but concise."""
             logger.error(f"Error extracting strategies from LLM: {e}")
             return []
     
-    def apply_rag_modifications(self, smiles: str, strategies: List[str]) -> List[str]:
+    def apply_rag_modifications(self, smiles: str, strategies: List[str], target_count: int = 10) -> List[str]:
         """
         Apply RAG-suggested modifications to molecule.
         
@@ -243,28 +252,30 @@ Be specific and chemistry-focused, but concise."""
         Args:
             smiles: Parent SMILES
             strategies: List of modification strategies
+            target_count: Target number of modifications to return
             
         Returns:
-            List of modified SMILES
+            List of modified SMILES (up to target_count)
         """
         # Simplified: use default modifications
         # In a full implementation, parse strategies and apply specific transformations
-        logger.info(f"Applying RAG strategies to {smiles}")
+        logger.info(f"Applying RAG strategies to {smiles} (target: {target_count} modifications)")
         modifications = apply_all_modifications(smiles)
         
-        # Limit to max_modifications_per_call
-        return modifications[:self.config.max_modifications_per_call]
+        # Return up to target_count unique modifications
+        return modifications[:target_count]
     
-    def rag_modification_strategy(self, smiles: str, property_gap: Dict[str, float]) -> List[str]:
+    def rag_modification_strategy(self, smiles: str, property_gap: Dict[str, float], target_count: int = 10) -> List[str]:
         """
         Main RAG-based modification strategy.
         
         Args:
             smiles: Parent molecule SMILES
             property_gap: Property gaps (target - current)
+            target_count: Target number of modifications to generate
             
         Returns:
-            List of modified SMILES
+            List of modified SMILES (attempts to generate target_count modifications)
         """
         if not self.config.enable_rag:
             logger.info("RAG disabled, returning empty list")
@@ -286,16 +297,36 @@ Be specific and chemistry-focused, but concise."""
                 return []
             
             # 4. Query for relevant info
-            question = f"How to modify molecules to improve {', '.join(property_gap.keys())}?"
-            context = self.query_rag_system(question, vectorstore)
+            try:
+                question = f"How to modify molecules to improve {', '.join(property_gap.keys())}?"
+                logger.info(f"Querying vectorstore with: {question}")
+                context = self.query_rag_system(question, vectorstore)
+                
+                if not context:
+                    logger.warning("No context retrieved from vectorstore")
+                    return []
+                
+                logger.info(f"Retrieved context ({len(context)} chars)")
+            except Exception as qe:
+                logger.error(f"Vectorstore query failed: {qe}")
+                import traceback
+                logger.error(traceback.format_exc())
+                return []
             
             # 5. Extract strategies
-            strategies = self.extract_modification_strategies(smiles, property_gap, context)
+            try:
+                strategies = self.extract_modification_strategies(smiles, property_gap, context)
+                if not strategies:
+                    logger.warning("No strategies extracted from LLM")
+                    return []
+            except Exception as se:
+                logger.error(f"Strategy extraction failed: {se}")
+                return []
             
-            # 6. Apply modifications
-            modified_smiles = self.apply_rag_modifications(smiles, strategies)
+            # 6. Apply modifications to generate target_count
+            modified_smiles = self.apply_rag_modifications(smiles, strategies, target_count=target_count)
             
-            logger.info(f"RAG strategy generated {len(modified_smiles)} modifications")
+            logger.info(f"RAG strategy generated {len(modified_smiles)} modifications (target: {target_count})")
             return modified_smiles
         
         except Exception as e:
