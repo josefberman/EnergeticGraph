@@ -150,22 +150,36 @@ class ChemistAgent:
     
     def evaluate_candidate(self, smiles: str) -> MoleculeState:
         """
-        Evaluate a candidate molecule: predict properties, check feasibility, calculate score.
+        Evaluate a candidate molecule.
         
         Args:
-            smiles: Candidate SMILES
+            smiles: Candidate SMILES string
             
         Returns:
-            MoleculeState object, or None if evaluation fails
+            MoleculeState object or None if invalid
         """
         try:
+            # Skip multi-molecule SMILES (containing dots)
+            if '.' in smiles:
+                logger.debug(f"Skipping multi-molecule SMILES: {smiles}")
+                return None
+            
+            # Validate SMILES
+            mol = Chem.MolFromSmiles(smiles)
+            if mol is None:
+                logger.debug(f"Invalid SMILES string: {smiles}")
+                return None
+            
+            # Canonicalize
+            smiles = Chem.MolToSmiles(mol)
+            
             # Predict properties
-            predicted_props = self.predictor.predict_properties(smiles)
+            predicted_props = predict_properties(smiles, self.config.system.models_directory)
             if predicted_props is None:
                 logger.debug(f"Failed to predict properties for {smiles}")
                 return None
             
-            # Check feasibility
+            # Calculate feasibility
             feasibility_score, is_feasible = calculate_feasibility(smiles)
             
             # Calculate total score
