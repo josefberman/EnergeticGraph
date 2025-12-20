@@ -50,7 +50,7 @@ class RAGConfig:
     enable_rag: bool = True  # Enable/disable RAG
     arxiv_max_results: int = 5  # Max papers to retrieve per query
     openai_api_key: Optional[str] = field(default_factory=lambda: os.getenv('OPENAI_API_KEY'))  # Auto-load from .env
-    chroma_persist_directory: str = "./beam_search_system/chroma_db"  # ChromaDB storage
+    chroma_persist_directory: str = "./chroma_db"  # ChromaDB storage
     embedding_model: str = "text-embedding-3-small"  # OpenAI embedding model
     llm_model: str = "gpt-4o-mini"  # ChatOpenAI model
     llm_temperature: float = 0.3  # LLM temperature
@@ -60,9 +60,9 @@ class RAGConfig:
 @dataclass
 class SystemConfig:
     """System-level configuration."""
-    models_directory: str = "./beam_search_system/models"  # Path to XGBoost models
-    dataset_path: str = "./beam_search_system/sample_start_molecules.csv"  # Path to molecular dataset
-    output_directory: str = "./beam_search_system/output"  # Output results
+    models_directory: str = "./models"  # Path to XGBoost models
+    dataset_path: str = "./sample_start_molecules.csv"  # Path to molecular dataset
+    output_directory: str = "./output"  # Output results
     log_level: str = "INFO"  # Logging level
     random_seed: int = 42  # For reproducibility
 
