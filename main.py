@@ -1,82 +1,123 @@
-import pandas as pd
-from langchain_core.messages import HumanMessage
-from langchain_openai.chat_models import ChatOpenAI
-from langgraph.checkpoint.memory import MemorySaver
-from langgraph.graph import END, START, StateGraph, MessagesState
-from langgraph.prebuilt import ToolNode
-from RAG import retrieve_context
-from prediction import predict_properties, train_data, convert_name_to_smiles
+"""
+Main entry point for the Beam Search Molecular Design System.
+"""
+
+import argparse
 import os
 from dotenv import load_dotenv
+from .data_structures import PropertyTarget
+from .config import Config
+from .designer import EnergeticDesigner
 
+# Load .env file
 load_dotenv()
 
-if not os.path.exists('./trained_models/'):
-    os.makedirs('./trained_models/')
-if not os.path.exists('./trained_models_plots/'):
-    os.makedirs('./trained_models_plots/')
-if len(os.listdir('./trained_models/')) == 0:
-    df = pd.read_csv('extracted_chemical_data.csv')
-    train_data(df)
 
-model = ChatOpenAI(model='gpt-4o', temperature=0).bind_tools(
-    [retrieve_context, predict_properties, convert_name_to_smiles])
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(
+        description='Beam Search Molecular Design System for Energetic Materials'
+    )
+    
+    # Target properties
+    parser.add_argument('--density', type=float, required=True, 
+                       help='Target density (g/cm³)')
+    parser.add_argument('--velocity', type=float, required=True,
+                       help='Target detonation velocity (m/s)')
+    parser.add_argument('--pressure', type=float, required=True,
+                       help='Target detonation pressure (GPa)')
+    parser.add_argument('--hf', type=float, required=True,
+                       help='Target formation enthalpy (kJ/mol)')
+    
+    # Configuration
+    parser.add_argument('--beam-width', type=int, default=10,
+                       help='Beam width (default: 10)')
+    parser.add_argument('--top-k', type=int, default=5,
+                       help='Top K candidates to keep (default: 5)')
+    parser.add_argument('--max-iter', type=int, default=20,
+                       help='Maximum iterations (default: 20)')
+    
+    # RAG configuration
+    parser.add_argument('--enable-rag', action='store_true',
+                       help='Enable RAG-based modification strategy')
+    parser.add_argument('--openai-key', type=str, default=None,
+                       help='OpenAI API key (if not set in env)')
+    parser.add_argument('--arxiv-max', type=int, default=5,
+                       help='Max Arxiv papers to retrieve (default: 5)')
+    
+    # System
+    parser.add_argument('--dataset', type=str, default='./beam_search_system/sample_start_molecules.csv',
+                       help='Path to dataset file')
+    parser.add_argument('--models-dir', type=str, default='./beam_search_system/models',
+                       help='Path to models directory')
+    parser.add_argument('--output', type=str, default='./beam_search_system/output/results.json',
+                       help='Output file path')
+    
+    args = parser.parse_args()
+    
+    # Create target properties
+    target = PropertyTarget(
+        density=args.density,
+        det_velocity=args.velocity,
+        det_pressure=args.pressure,
+        hf_solid=args.hf
+    )
+    
+    # Create configuration
+    config = Config()
+    config.beam_search.beam_width = args.beam_width
+    config.beam_search.top_k = args.top_k
+    config.beam_search.max_iterations = args.max_iter
+    
+    config.rag.enable_rag = args.enable_rag
+    
+    # Override API key if provided via command line
+    if args.openai_key:
+        config.rag.openai_api_key = args.openai_key
+    # Otherwise, it will use the value from .env (auto-loaded in config.py)
+    
+    config.rag.arxiv_max_results = args.arxiv_max
+    
+    config.system.dataset_path = args.dataset
+    config.system.models_directory = args.models_dir
+    config.system.output_directory = os.path.dirname(args.output)
+    
+    # Create designer
+    designer = EnergeticDesigner(target, config)
+    
+    # Initialize
+    print("Initializing system...")
+    designer.initialize()
+    
+    # Run design loop
+    print("\nRunning beam search optimization...")
+    print(f"Target: {target}")
+    print(f"RAG enabled: {config.rag.enable_rag}")
+    print(f"Beam width: {config.beam_search.beam_width}")
+    print(f"Top K: {config.beam_search.top_k}")
+    print(f"Max iterations: {config.beam_search.max_iterations}")
+    print()
+    
+    best_molecule = designer.run_design_loop()
+    
+    # Display results
+    print("\n" + "="*60)
+    print("RESULTS")
+    print("="*60)
+    print(f"Best SMILES: {best_molecule.smiles}")
+    print(f"Score: {best_molecule.score:.4f}")
+    print(f"Feasibility: {best_molecule.feasibility:.2f}")
+    print(f"Properties:")
+    for prop, value in best_molecule.properties.items():
+        target_val = target.to_dict()[prop]
+        print(f"  {prop}: {value:.2f} (target: {target_val:.2f})")
+    print("="*60)
+    
+    # Save results
+    print(f"\nSaving results to {args.output}...")
+    designer.save_results(args.output)
+    print("Done!")
 
 
-def call_model(state: MessagesState):
-    return {'messages': model.invoke(state['messages'])}
-
-
-def should_continue(state: MessagesState):
-    last_message = state['messages'][-1]
-    if last_message.tool_calls:
-        return 'tools'
-    return END
-
-
-workflow = StateGraph(MessagesState)
-workflow.add_node('agent', call_model)
-workflow.add_node('tools', ToolNode([retrieve_context, predict_properties, convert_name_to_smiles]))
-workflow.add_edge(START, 'agent')
-workflow.add_conditional_edges('agent', should_continue)
-workflow.add_edge('tools', 'agent')
-
-checkpointer = MemorySaver()
-
-app = workflow.compile(checkpointer=checkpointer)
-
-# prompt = (
-#     """You are an expert explosives chemist, and you are given a tool """
-#     """for retrieving relevant papers from arXiv, a tool for converting a molecule's name to SMILES representation, """
-#     """and a tool for predicting energetic material properties. """
-#     """You are given a query related to energetic materials and must first use the tools before """
-#     """incorporating your answer. When using the retrieval tool, convert the query to a search term and """
-#     """always give a source to your answer. If you don't find a specific answer in arXiv, use the name conversion tool using """
-#     """the IUPAC molecule's name as input to convert the name to SMILES representation, and then use the prediction tool """
-#     """with the SMILES representation as input. If you can't find an answer in retrieved documents or in predicted properties, """
-#     """answer it using your knowledge. Answer shortly and on-point."""
-# )
-
-prompt = (
-    "You are an expert in energetic materials with access to three tools:\n"
-    "1. A tool for retrieving relevant academic papers from arXiv.\n"
-    "2. A tool for converting molecule names into SMILES representations.\n"
-    "3. A tool for predicting properties of energetic materials from their SMILES.\n\n"
-    "When a user query is given, follow this strict procedure:\n\n"
-    "- First, always attempt to retrieve relevant information using the arXiv retrieval tool. "
-    "Format any answer from this step with proper sources.\n"
-    "- If no relevant source is found and the user asks about a specific property of a material, then:\n"
-    "  1. Convert the material’s name in the query into its IUPAC name (if needed).\n"
-    "  2. Use the name-to-SMILES conversion tool.\n"
-    "  3. Use the SMILES string to predict the material's properties using the prediction tool.\n"
-    "- If both steps fail to provide an answer, fall back to your own scientific knowledge.\n\n"
-    "Always keep your response short and directly to the point."
-)
-query = input('Enter query: ')
-states = app.invoke({'messages': [HumanMessage(content=prompt), HumanMessage(content=query)]},
-                    config={'configurable': {'thread_id': 42}})
-
-print(states)
-
-for s in states['messages'][1:]:
-    s.pretty_print()
+if __name__ == '__main__':
+    main()
