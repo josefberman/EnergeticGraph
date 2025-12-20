@@ -17,7 +17,7 @@ class BeamSearchConfig:
     beam_width: int = 10  # Number of candidates to keep in beam
     top_k: int = 5  # Number of top candidates to select after each iteration
     max_iterations: int = 20  # Maximum number of search iterations
-    convergence_threshold: float = 0.01  # Stop if improvement < threshold
+    convergence_threshold: float = 0.001  # Stop if improvement < threshold
 
 
 @dataclass
@@ -47,10 +47,10 @@ class ScoringConfig:
 @dataclass
 class RAGConfig:
     """Configuration for RAG-based modification strategy."""
-    enable_rag: bool = True  # Enable/disable RAG
+    enable_rag: bool = True  # Enabled by default (using FAISS vectorstore)
     arxiv_max_results: int = 5  # Max papers to retrieve per query
     openai_api_key: Optional[str] = field(default_factory=lambda: os.getenv('OPENAI_API_KEY'))  # Auto-load from .env
-    chroma_persist_directory: str = "./chroma_db"  # ChromaDB storage
+    chroma_persist_directory: str = "./chroma_db"  # ChromaDB storage (not used with FAISS)
     embedding_model: str = "text-embedding-3-small"  # OpenAI embedding model
     llm_model: str = "gpt-4o-mini"  # ChatOpenAI model
     llm_temperature: float = 0.3  # LLM temperature

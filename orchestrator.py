@@ -4,9 +4,9 @@ Beam Search Orchestrator - manages the beam search algorithm.
 
 import logging
 from typing import List
-from .data_structures import MoleculeState, PropertyTarget
-from .agents.worker_agent import ChemistAgent
-from .config import Config
+from data_structures import MoleculeState, PropertyTarget
+from agents.worker_agent import ChemistAgent
+from config import Config
 
 logger = logging.getLogger(__name__)
 

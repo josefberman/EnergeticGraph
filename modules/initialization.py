@@ -7,7 +7,7 @@ import numpy as np
 from typing import Dict, Optional
 import logging
 
-from ..data_structures import MoleculeState, PropertyTarget
+from data_structures import MoleculeState, PropertyTarget
 
 logger = logging.getLogger(__name__)
 

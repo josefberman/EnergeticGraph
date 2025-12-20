@@ -8,7 +8,7 @@ import numpy as np
 from typing import Dict, Optional
 import logging
 
-from ..descriptors import create_descriptor
+from descriptors import create_descriptor
 
 logger = logging.getLogger(__name__)
 

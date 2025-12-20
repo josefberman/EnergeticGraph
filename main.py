@@ -5,9 +5,9 @@ Main entry point for the Beam Search Molecular Design System.
 import argparse
 import os
 from dotenv import load_dotenv
-from .data_structures import PropertyTarget
-from .config import Config
-from .designer import EnergeticDesigner
+from data_structures import PropertyTarget
+from config import Config
+from designer import EnergeticDesigner
 
 # Load .env file
 load_dotenv()
@@ -38,19 +38,19 @@ def main():
                        help='Maximum iterations (default: 20)')
     
     # RAG configuration
-    parser.add_argument('--enable-rag', action='store_true',
-                       help='Enable RAG-based modification strategy')
+    parser.add_argument('--disable-rag', action='store_true',
+                       help='Disable RAG-based modification strategy (enabled by default)')
     parser.add_argument('--openai-key', type=str, default=None,
                        help='OpenAI API key (if not set in env)')
-    parser.add_argument('--arxiv-max', type=int, default=5,
-                       help='Max Arxiv papers to retrieve (default: 5)')
+    parser.add_argument('--arxiv-max', type=int, default=3,
+                       help='Max Arxiv papers to retrieve (default: 3)')
     
     # System
-    parser.add_argument('--dataset', type=str, default='./beam_search_system/sample_start_molecules.csv',
+    parser.add_argument('--dataset', type=str, default='./sample_start_molecules.csv',
                        help='Path to dataset file')
-    parser.add_argument('--models-dir', type=str, default='./beam_search_system/models',
+    parser.add_argument('--models-dir', type=str, default='./models',
                        help='Path to models directory')
-    parser.add_argument('--output', type=str, default='./beam_search_system/output/results.json',
+    parser.add_argument('--output', type=str, default='./output/results.json',
                        help='Output file path')
     
     args = parser.parse_args()
@@ -69,7 +69,9 @@ def main():
     config.beam_search.top_k = args.top_k
     config.beam_search.max_iterations = args.max_iter
     
-    config.rag.enable_rag = args.enable_rag
+    # Disable RAG if flag is provided
+    if args.disable_rag:
+        config.rag.enable_rag = False
     
     # Override API key if provided via command line
     if args.openai_key:
