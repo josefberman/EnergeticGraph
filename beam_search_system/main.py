@@ -5,9 +5,9 @@ Main entry point for the Beam Search Molecular Design System.
 import argparse
 import os
 from dotenv import load_dotenv
-from data_structures import PropertyTarget
-from config import Config
-from designer import EnergeticDesigner
+from .data_structures import PropertyTarget
+from .config import Config
+from .designer import EnergeticDesigner
 
 # Load .env file
 load_dotenv()
