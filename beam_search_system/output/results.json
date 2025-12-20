@@ -1,0 +1,44 @@
+{
+  "target_properties": {
+    "Density": 1.5142,
+    "Det Velocity": 4731.875106,
+    "Det Pressure": 8.898060076,
+    "Hf solid": 57.40022945
+  },
+  "seed_molecule": {
+    "smiles": "O=N(=O)c1ccc2nc3ccccc3nc2c1",
+    "properties": {
+      "Hf solid": 57.40022945,
+      "Det Velocity": 4731.875106,
+      "Det Pressure": 8.898060076,
+      "Density": 1.5142
+    },
+    "score": 0.0,
+    "feasibility": 1.0,
+    "provenance": "seed_from_dataset",
+    "is_feasible": true,
+    "generation": 0,
+    "parent_smiles": null
+  },
+  "best_molecule": {
+    "smiles": "O=N(=O)c1ccc2nc3ccccc3nc2c1",
+    "properties": {
+      "Hf solid": 57.40022945,
+      "Det Velocity": 4731.875106,
+      "Det Pressure": 8.898060076,
+      "Density": 1.5142
+    },
+    "score": 0.0,
+    "feasibility": 1.0,
+    "provenance": "seed_from_dataset",
+    "is_feasible": true,
+    "generation": 0,
+    "parent_smiles": null
+  },
+  "config": {
+    "beam_width": 10,
+    "top_k": 5,
+    "max_iterations": 20,
+    "rag_enabled": false
+  }
+}

@@ -91,12 +91,12 @@ def find_closest_match(dataset: pd.DataFrame,
     target_dict = target_properties.to_dict()
     
     # Map dataset columns to property names
-    # Expected columns: 'SMILES', 'Hf solid', 'Det Velocity', 'Det Pressure', 'Density'
+    # CSV columns: 'density', 'det_velocity', 'det_pressure', 'hf_solid', 'SMILES'
     column_mapping = {
-        'Hf solid': 'Hf solid',
-        'Det Velocity': 'Det Velocity',
-        'Det Pressure': 'Det Pressure',
-        'Density': 'Density'
+        'hf_solid': 'Hf solid',
+        'det_velocity': 'Det Velocity',
+        'det_pressure': 'Det Pressure',
+        'density': 'Density'
     }
     
     best_smiles = None
@@ -106,9 +106,22 @@ def find_closest_match(dataset: pd.DataFrame,
     for idx, row in dataset.iterrows():
         # Extract properties
         props = {}
+        valid = True
         for col, prop_name in column_mapping.items():
             if col in row:
-                props[prop_name] = row[col]
+                val = row[col]
+                # Skip if NaN or empty
+                if pd.isna(val) or val == '':
+                    valid = False
+                    break
+                try:
+                    props[prop_name] = float(val)
+                except (ValueError, TypeError):
+                    valid = False
+                    break
+        
+        if not valid or len(props) != len(column_mapping):
+            continue
         
         # Calculate distance
         distance = calculate_euclidean_distance(target_dict, props, property_ranges)
