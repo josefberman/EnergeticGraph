@@ -4,6 +4,7 @@ Worker Agent (ChemistAgent) - Generates molecular variations.
 
 import logging
 from typing import List, Dict
+from rdkit import Chem
 from data_structures import MoleculeState, PropertyTarget
 from modules.prediction import PropertyPredictor
 from modules.feasibility import calculate_feasibility
@@ -86,67 +87,127 @@ class ChemistAgent:
         # 1. Analyze property gap
         property_gap = self.analyze_property_gap()
         
-        # 2. Generate modifications using RAG first
-        modified_smiles = []
+        # 2. EXHAUSTIVE generation loop - keep trying until we reach beam_width
+        candidates = []
+        seen = set()  # Track already-seen SMILES to avoid duplicates
+        max_attempts = 10  # Increased for exhaustive search
+        attempt = 0
         
-        if self.config.rag.enable_rag and self.rag_strategy is not None:
-            logger.info(f"Attempting RAG-based modification strategy (target: {target_count} modifications)")
+        logger.info(f"Starting EXHAUSTIVE candidate generation for beam_width={target_count}")
+        
+        while len(candidates) < target_count and attempt < max_attempts:
+            attempt += 1
+            needed = target_count - len(candidates)
+            logger.info(f"Exhaustive attempt {attempt}/{max_attempts}: Need {needed} more (have {len(candidates)})")
+            
+            # Request much more than we need
+            request_count = max(needed * 5, target_count * 3)  
+            batch_smiles = []
+            
+            # STRATEGY 1: RAG with multiple queries (if enabled)
+            if self.config.rag.enable_rag and self.rag_strategy is not None:
+                try:
+                    rag_smiles = self.rag_strategy.rag_modification_strategy(
+                        self.parent.smiles,
+                        property_gap,
+                        target_count=request_count
+                    )
+                    batch_smiles.extend(rag_smiles)
+                    logger.info(f"RAG returned {len(rag_smiles)} modifications")
+                except Exception as e:
+                    logger.warning(f"RAG strategy failed: {e}")
+
+            # STRATEGY 2: ALWAYS run default strategy
             try:
-                # Request more modifications from RAG to account for potential duplicates
-                rag_smiles = self.rag_strategy.rag_modification_strategy(
+                default_smiles = default_modification_strategy(
                     self.parent.smiles,
                     property_gap,
-                    target_count=target_count * 2  # Request 2x to ensure we have enough
+                    target_count=request_count
                 )
-                modified_smiles.extend(rag_smiles)
-                logger.info(f"RAG generated {len(rag_smiles)} modifications")
+                batch_smiles.extend(default_smiles)
+                logger.info(f"Default strategy added {len(default_smiles)} modifications")
             except Exception as e:
-                logger.warning(f"RAG strategy failed: {e}")
-        
-        # 3. Fill remaining slots with default strategy if needed
-        remaining = target_count - len(modified_smiles)
-        if remaining > 0:
-            logger.info(f"Filling {remaining} remaining slots with default modification strategy")
-            default_smiles = default_modification_strategy(
-                self.parent.smiles,
-                property_gap
-            )
+                logger.warning(f"Default strategy failed: {e}")
             
-            # Add default modifications until we reach target_count
-            for smiles in default_smiles:
-                if smiles not in modified_smiles:
-                    modified_smiles.append(smiles)
-                    remaining -= 1
-                    if remaining <= 0:
-                        break
-        
-        # Remove duplicates while preserving order
-        seen = set()
-        unique_smiles = []
-        for smiles in modified_smiles:
-            if smiles not in seen and smiles != self.parent.smiles:  # Don't include parent
-                seen.add(smiles)
-                unique_smiles.append(smiles)
-                if len(unique_smiles) >= target_count:
+            # STRATEGY 3: Direct diverse modifications
+            from modules.modification_tools import generate_diverse_modifications, apply_all_modifications
+            try:
+                diverse_smiles = generate_diverse_modifications(self.parent.smiles, target_count=request_count)
+                batch_smiles.extend(diverse_smiles)
+                logger.info(f"Diverse generation added {len(diverse_smiles)} modifications")
+            except Exception as e:
+                logger.warning(f"Diverse generation failed: {e}")
+            
+            # Filter to unique unseen SMILES
+            unique_batch = []
+            for s in batch_smiles:
+                if s not in seen and s != self.parent.smiles:
+                    seen.add(s)
+                    unique_batch.append(s)
+            
+            logger.info(f"Unique new candidates to evaluate: {len(unique_batch)}")
+            
+            # Evaluate candidates
+            for smiles in unique_batch:
+                if len(candidates) >= target_count:
                     break
+                candidate = self.evaluate_candidate(smiles)
+                if candidate is not None:
+                    candidates.append(candidate)
+            
+            # STRATEGY 4: Recursive expansion from existing candidates
+            if len(candidates) < target_count and len(candidates) > 0:
+                logger.info(f"Recursive expansion from {len(candidates)} existing candidates")
+                
+                # Expand from ALL existing candidates, not just top 5
+                for existing in candidates:
+                    if len(candidates) >= target_count:
+                        break
+                    try:
+                        # Level 1 expansion
+                        expanded = apply_all_modifications(existing.smiles)
+                        for exp_smiles in expanded:
+                            if exp_smiles not in seen and exp_smiles != self.parent.smiles:
+                                seen.add(exp_smiles)
+                                exp_candidate = self.evaluate_candidate(exp_smiles)
+                                if exp_candidate is not None:
+                                    candidates.append(exp_candidate)
+                                    if len(candidates) >= target_count:
+                                        break
+                    except Exception as e:
+                        logger.debug(f"Expansion failed: {e}")
+            
+            # STRATEGY 5: Deep recursive expansion (depth-2) if still not enough
+            if len(candidates) < target_count and attempt >= 3:
+                logger.info(f"Deep expansion (depth-2) - still need {target_count - len(candidates)} more")
+                for existing in candidates[:min(3, len(candidates))]:
+                    if len(candidates) >= target_count:
+                        break
+                    try:
+                        level1 = apply_all_modifications(existing.smiles)
+                        for l1_smiles in level1[:3]:
+                            if len(candidates) >= target_count:
+                                break
+                            level2 = apply_all_modifications(l1_smiles)
+                            for l2_smiles in level2[:5]:
+                                if l2_smiles not in seen:
+                                    seen.add(l2_smiles)
+                                    candidate = self.evaluate_candidate(l2_smiles)
+                                    if candidate is not None:
+                                        candidates.append(candidate)
+                                        if len(candidates) >= target_count:
+                                            break
+                    except Exception as e:
+                        logger.debug(f"Deep expansion failed: {e}")
         
-        modified_smiles = unique_smiles
-        
-        if not modified_smiles:
-            logger.warning(f"No modifications generated for {self.parent.smiles}")
+        if not candidates:
+            logger.warning(f"No valid candidates generated for {self.parent.smiles} after {attempt} attempts")
             return []
         
-        logger.info(f"Generated {len(modified_smiles)} unique candidate modifications (target: {target_count})")
-        
-        # 4. Evaluate all candidates
-        candidates = []
-        for smiles in modified_smiles:
-            candidate = self.evaluate_candidate(smiles)
-            if candidate is not None:
-                candidates.append(candidate)
-        
-        logger.info(f"Successfully evaluated {len(candidates)} candidates (target: {target_count})")
-        return candidates
+        # Return exactly target_count candidates (truncate if we have more)
+        final_candidates = candidates[:target_count]
+        logger.info(f"EXHAUSTIVE SEARCH: Returning {len(final_candidates)} candidates (target: {target_count})")
+        return final_candidates
     
     def evaluate_candidate(self, smiles: str) -> MoleculeState:
         """
@@ -174,7 +235,7 @@ class ChemistAgent:
             smiles = Chem.MolToSmiles(mol)
             
             # Predict properties
-            predicted_props = predict_properties(smiles, self.config.system.models_directory)
+            predicted_props = self.predictor.predict_properties(smiles)
             if predicted_props is None:
                 logger.debug(f"Failed to predict properties for {smiles}")
                 return None
@@ -188,10 +249,9 @@ class ChemistAgent:
                 predicted_props,
                 target_dict,
                 feasibility_score,
-                mae_weight=self.config.scoring.mae_weight,
+                mape_weight=self.config.scoring.mape_weight,
                 feasibility_weight=self.config.scoring.feasibility_weight,
-                property_weights=self.config.scoring.property_weights,
-                property_ranges=self.config.scoring.property_ranges
+                property_weights=self.config.scoring.property_weights
             )
             
             # Create MoleculeState

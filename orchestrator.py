@@ -32,6 +32,29 @@ class BeamSearchEngine:
         self.history = []
         self.best_ever = None
     
+    def calculate_mape(self, molecule: MoleculeState) -> float:
+        """
+        Calculate Mean Absolute Percentage Error relative to target values.
+        
+        Args:
+            molecule: Molecule to evaluate
+            
+        Returns:
+            MAPE as percentage (lower is better)
+        """
+        target_dict = self.target.to_dict()
+        props = molecule.properties
+        
+        errors = []
+        for key in ['Density', 'Det Velocity', 'Det Pressure', 'Hf solid']:
+            if key in target_dict and key in props:
+                target_val = abs(target_dict[key])
+                if target_val > 0:
+                    error_pct = abs(props[key] - target_dict[key]) / target_val * 100
+                    errors.append(error_pct)
+        
+        return sum(errors) / len(errors) if errors else 100.0
+    
     def run(self, seed_molecule: MoleculeState) -> MoleculeState:
         """
         Run beam search algorithm.
@@ -82,8 +105,8 @@ class BeamSearchEngine:
             unique_candidates = self._remove_duplicates(feasible_candidates)
             logger.info(f"Unique candidates: {len(unique_candidates)}")
             
-            # Rank by score (lower is better)
-            ranked_candidates = sorted(unique_candidates, key=lambda x: x.score)
+            # Rank by MAPE (lower is better) instead of combined score
+            ranked_candidates = sorted(unique_candidates, key=lambda x: self.calculate_mape(x))
             
             # Prune to top_k
             next_beam = ranked_candidates[:self.beam_config.top_k]
@@ -91,10 +114,12 @@ class BeamSearchEngine:
             # Log iteration results
             self.log_iteration(iteration + 1, next_beam)
             
-            # Update best ever
-            if next_beam[0].score < self.best_ever.score:
+            # Update best ever by MAPE comparison
+            best_mape = self.calculate_mape(next_beam[0])
+            best_ever_mape = self.calculate_mape(self.best_ever)
+            if best_mape < best_ever_mape:
                 self.best_ever = next_beam[0]
-                logger.info(f"*** NEW BEST: {self.best_ever.smiles} (score: {self.best_ever.score:.4f}) ***")
+                logger.info(f"*** NEW BEST: {self.best_ever.smiles} (MAPE: {best_mape:.2f}%) ***")
             
             # Check convergence
             if iteration > 0:

@@ -47,28 +47,64 @@ def calculate_sascore(smiles: str) -> float:
 def _simple_sascore_estimate(smiles: str) -> float:
     """
     Simple SAScore estimate based on molecular complexity.
+    Adjusted for energetic materials which commonly have nitrogen-rich heterocycles.
     
-    Returns score 1-10 (lower is better).
+    Returns score 1-10 (lower is better = easier to synthesize).
     """
     try:
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
             return 10.0
         
-        # Simple heuristic based on rings, rotatable bonds, and complexity
         num_rings = Descriptors.RingCount(mol)
         num_rot_bonds = Descriptors.NumRotatableBonds(mol)
         num_atoms = mol.GetNumAtoms()
         num_heteroatoms = Descriptors.NumHeteroatoms(mol)
         
-        # Penalize: many rings, many rotatable bonds, complex structures
-        score = 1.0
-        score += min(num_rings * 0.5, 3.0)
-        score += min(num_rot_bonds * 0.3, 2.0)
-        score += min((num_atoms - 10) * 0.1, 2.0) if num_atoms > 10 else 0
-        score += min(num_heteroatoms * 0.2, 2.0)
+        # Count specific structural features
+        num_nitrogens = smiles.count('N') + smiles.count('n')
         
-        return min(score, 10.0)
+        # Start with a base score (most molecules are synthesizable)
+        score = 2.0
+        
+        # Penalize only very complex ring systems (>4 rings)
+        if num_rings > 4:
+            score += (num_rings - 4) * 0.4
+        
+        # Light penalty for many rotatable bonds (flexible = harder to control)
+        score += min(num_rot_bonds * 0.15, 1.5)
+        
+        # Size penalty only for very large molecules (>30 atoms)
+        if num_atoms > 30:
+            score += min((num_atoms - 30) * 0.05, 1.5)
+        
+        # Heteroatom penalty is very low for energetic materials
+        # (they commonly have many N, O atoms)
+        if num_heteroatoms > 8:
+            score += min((num_heteroatoms - 8) * 0.1, 1.0)
+        
+        # Check for problematic/unstable patterns
+        unstable_patterns = [
+            'O-O',  # Peroxides
+            'N-N-N-N',  # Long nitrogen chains
+            '[N-]=[N+]=N',  # Azides (slightly penalize)
+        ]
+        for pattern in unstable_patterns:
+            if pattern in smiles:
+                score += 0.3
+        
+        # Bonus for common energetic material scaffolds (well-studied synthesis)
+        favorable_patterns = [
+            'c1nnn',  # Tetrazole (well-known synthesis)
+            'c1nn',   # Triazole
+            'n1nnn',  # Tetrazole variant
+            'c1ncn',  # Imidazole/pyrimidine
+        ]
+        for pattern in favorable_patterns:
+            if pattern in smiles.lower():
+                score -= 0.5
+        
+        return max(1.0, min(score, 10.0))
     
     except:
         return 10.0
@@ -117,10 +153,22 @@ def calculate_feasibility(smiles: str) -> Tuple[float, bool]:
     sascore = calculate_sascore(smiles)
     
     # Convert SAScore (1-10, lower is better) to feasibility (0-1, higher is better)
-    # Use a cutoff: SAScore > 6 is considered difficult
-    feasibility_score = max(0.0, (10.0 - sascore) / 10.0)
+    # More nuanced conversion:
+    # SAScore 1-3: Easy synthesis (90-100% feasibility)
+    # SAScore 3-5: Moderate (70-90% feasibility)  
+    # SAScore 5-7: Challenging but doable (50-70% feasibility)
+    # SAScore 7-10: Very difficult (0-50% feasibility)
     
-    # Consider feasible if SAScore <= 7 (moderately easy to synthesize)
+    if sascore <= 3.0:
+        feasibility_score = 0.90 + (3.0 - sascore) / 20.0  # 90-100%
+    elif sascore <= 5.0:
+        feasibility_score = 0.70 + (5.0 - sascore) * 0.10  # 70-90%
+    elif sascore <= 7.0:
+        feasibility_score = 0.50 + (7.0 - sascore) * 0.10  # 50-70%
+    else:
+        feasibility_score = max(0.0, 0.50 - (sascore - 7.0) * 0.167)  # 0-50%
+    
+    # Consider feasible if SAScore <= 7 (moderately synthesizable)
     is_feasible = sascore <= 7.0
     
     return feasibility_score, is_feasible

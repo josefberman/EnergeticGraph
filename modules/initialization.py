@@ -36,54 +36,50 @@ def load_dataset(dataset_path: str) -> pd.DataFrame:
         raise
 
 
-def calculate_euclidean_distance(props1: Dict[str, float], 
-                                 props2: Dict[str, float],
-                                 property_ranges: Dict[str, tuple]) -> float:
+def calculate_mape_distance(props1: Dict[str, float], 
+                            props2: Dict[str, float]) -> float:
     """
-    Calculate Euclidean distance between two property vectors.
+    Calculate MAPE-based distance between two property vectors.
+    Uses Mean Absolute Percentage Error - no normalization needed.
     
     Args:
-        props1: First property dict
-        props2: Second property dict
-        property_ranges: Normalization ranges
+        props1: First property dict (target)
+        props2: Second property dict (candidate)
         
     Returns:
-        Euclidean distance (normalized)
+        MAPE distance (lower is better)
     """
-    squared_diff_sum = 0.0
+    total_error = 0.0
     count = 0
     
     for prop_name in props1.keys():
         if prop_name in props2:
-            val1 = props1[prop_name]
-            val2 = props2[prop_name]
+            target = props1[prop_name]
+            pred = props2[prop_name]
             
-            # Normalize
-            if prop_name in property_ranges:
-                min_val, max_val = property_ranges[prop_name]
-                if max_val != min_val:
-                    val1 = (val1 - min_val) / (max_val - min_val)
-                    val2 = (val2 - min_val) / (max_val - min_val)
+            # Calculate percentage error relative to target
+            if abs(target) > 1e-10:
+                percentage_error = abs(target - pred) / abs(target) * 100
+            else:
+                percentage_error = abs(target - pred) * 100
             
-            squared_diff_sum += (val1 - val2) ** 2
+            total_error += percentage_error
             count += 1
     
     if count == 0:
         return float('inf')
     
-    return np.sqrt(squared_diff_sum / count)
+    return total_error / count
 
 
 def find_closest_match(dataset: pd.DataFrame,
-                       target_properties: PropertyTarget,
-                       property_ranges: Dict[str, tuple]) -> MoleculeState:
+                       target_properties: PropertyTarget) -> MoleculeState:
     """
-    Find the closest molecule in dataset to target properties.
+    Find the closest molecule in dataset to target properties using MAPE.
     
     Args:
         dataset: DataFrame with SMILES and properties
         target_properties: Target property values
-        property_ranges: Normalization ranges for distance calculation
         
     Returns:
         MoleculeState of best seed molecule
@@ -123,8 +119,8 @@ def find_closest_match(dataset: pd.DataFrame,
         if not valid or len(props) != len(column_mapping):
             continue
         
-        # Calculate distance
-        distance = calculate_euclidean_distance(target_dict, props, property_ranges)
+        # Calculate MAPE distance (no normalization needed)
+        distance = calculate_mape_distance(target_dict, props)
         
         if distance < best_distance:
             best_distance = distance

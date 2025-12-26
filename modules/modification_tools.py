@@ -11,69 +11,100 @@ import random
 logger = logging.getLogger(__name__)
 
 
-def addition_modification(smiles: str, functional_groups: List[str] = None) -> List[str]:
+def addition_modification(smiles: str, functional_groups: List[str] = None, max_results: int = None) -> List[str]:
     """
     Add functional groups to molecule at available positions.
+    Uses proper bond creation to attach groups.
     
     Args:
         smiles: Input SMILES
         functional_groups: List of SMARTS functional groups to add
+        max_results: Optional max results (None = no limit)
         
     Returns:
-        List of modified SMILES
+        List of modified SMILES with functional groups properly bonded
     """
-    if functional_groups is None:
-        # Default energetic functional groups
-        functional_groups = [
-            '[N+](=O)[O-]',  # Nitro group
-            'N',  # Amino group
-            'N=[N+]=[N-]',  # Azido group
-            'C#N',  # Cyano group
-        ]
-    
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         return []
     
     results = []
     
-    # Find attachment points (C or N atoms with available valence)
+    # SMILES patterns that can be directly substituted for hydrogen
+    # Format: (smarts_pattern, attachment_smiles)
+    substituent_patterns = [
+        ('[N+](=O)[O-]', '[N+](=O)[O-]'),  # Nitro group -NO2
+        ('N', 'N'),  # Amino -NH2
+        ('[N-]=[N+]=[N-]', '[N-]=[N+]=[N-]'),  # Azido -N3
+        ('C#N', 'C#N'),  # Cyano -CN
+        ('O', 'O'),  # Hydroxyl -OH
+        ('F', 'F'),  # Fluoro -F
+        ('Cl', 'Cl'),  # Chloro -Cl
+        ('C(=O)O', 'C(=O)O'),  # Carboxylic acid -COOH
+        ('C(=O)N', 'C(=O)N'),  # Amide -CONH2
+        ('N=O', 'N=O'),  # Nitroso -NO
+    ]
+    
+    # Find carbon atoms that have hydrogens we can replace
     for atom_idx in range(mol.GetNumAtoms()):
         atom = mol.GetAtomWithIdx(atom_idx)
         
-        # Skip if not C or N
-        if atom.GetSymbol() not in ['C', 'N']:
+        # Only modify C atoms (safer chemistry)
+        if atom.GetSymbol() != 'C':
             continue
         
-        # Check if atom has hydrogen we can replace
-        if atom.GetTotalNumHs() == 0:
+        # Check if atom has hydrogens to replace
+        num_hs = atom.GetTotalNumHs()
+        if num_hs == 0:
             continue
         
-        # Try adding each functional group
-        for fg_smiles in functional_groups:
+        # Try each substituent by direct SMILES manipulation
+        for pattern_name, substituent in substituent_patterns:
             try:
-                # Create editable molecule
+                # Create a modified SMILES by replacing one H with the substituent
+                # Use RWMol for proper bond creation
                 edit_mol = Chem.RWMol(mol)
                 
-                # Add functional group
-                fg_mol = Chem.MolFromSmiles(fg_smiles)
-                if fg_mol is None:
+                # Add substituent molecule
+                sub_mol = Chem.MolFromSmiles(substituent)
+                if sub_mol is None:
                     continue
                 
-                # Simple approach: replace H with functional group
-                # This is a simplified version - real implementation would use SMARTS reactions
-                combined = Chem.CombineMols(edit_mol, fg_mol)
+                # Find attachment point on substituent (first atom)
+                sub_attach_idx = 0
                 
-                # Try to get SMILES
-                new_smiles = Chem.MolToSmiles(combined)
-                if new_smiles and new_smiles != smiles:
-                    results.append(new_smiles)
-            
+                # Add all atoms from substituent to edit_mol
+                atom_map = {}
+                for sub_atom in sub_mol.GetAtoms():
+                    new_idx = edit_mol.AddAtom(sub_atom)
+                    atom_map[sub_atom.GetIdx()] = new_idx
+                
+                # Add all bonds from substituent
+                for bond in sub_mol.GetBonds():
+                    begin_idx = atom_map[bond.GetBeginAtomIdx()]
+                    end_idx = atom_map[bond.GetEndAtomIdx()]
+                    edit_mol.AddBond(begin_idx, end_idx, bond.GetBondType())
+                
+                # Connect substituent to the target atom with a single bond
+                edit_mol.AddBond(atom_idx, atom_map[sub_attach_idx], Chem.BondType.SINGLE)
+                
+                # Sanitize and get SMILES
+                try:
+                    Chem.SanitizeMol(edit_mol)
+                    new_smiles = Chem.MolToSmiles(edit_mol)
+                    if new_smiles and new_smiles != smiles:
+                        results.append(new_smiles)
+                except:
+                    pass  # Sanitization failed, skip this modification
+                    
             except Exception as e:
-                logger.debug(f"Failed to add {fg_smiles} to {smiles}: {e}")
+                logger.debug(f"Failed to add {pattern_name} to position {atom_idx}: {e}")
                 continue
     
-    return list(set(results))[:5]  # Return unique results, max 5
+    unique_results = list(set(results))
+    if max_results:
+        return unique_results[:max_results]
+    return unique_results
 
 
 def subtraction_modification(smiles: str) -> List[str]:
@@ -112,7 +143,7 @@ def subtraction_modification(smiles: str) -> List[str]:
                 logger.debug(f"Failed to remove atom {atom_idx} from {smiles}: {e}")
                 continue
     
-    return list(set(results))[:3]
+    return list(set(results))  # No limit - return all valid results
 
 
 def substitution_modification(smiles: str) -> List[str]:
@@ -160,7 +191,7 @@ def substitution_modification(smiles: str) -> List[str]:
             logger.debug(f"Substitution reaction failed: {e}")
             continue
     
-    return list(set(results))[:5]
+    return list(set(results))  # No limit - return all valid results
 
 
 def ring_modification(smiles: str) -> List[str]:
@@ -271,10 +302,10 @@ def ring_modification(smiles: str) -> List[str]:
                 logger.debug(f"Failed to cyclize atoms {atom1_idx}-{atom2_idx}: {e}")
                 continue
         
-        if len(results) >= 5:
+        if len(results) >= 20:  # Increased limit for more diversity
             break
     
-    return list(set(results))[:5]
+    return list(set(results))  # No limit - return all valid results
 
 
 def apply_all_modifications(smiles: str) -> List[str]:
@@ -299,3 +330,64 @@ def apply_all_modifications(smiles: str) -> List[str]:
     unique_mods = [s for s in unique_mods if s != smiles]
     
     return unique_mods
+
+
+def generate_diverse_modifications(smiles: str, target_count: int = 20) -> List[str]:
+    """
+    Generate a diverse set of molecular modifications to reach target_count.
+    
+    Uses multiple strategies:
+    1. Apply all basic modification types
+    2. If not enough, apply depth-2 modifications (modify the modifications)
+    3. Shuffle and return diverse set
+    
+    Args:
+        smiles: Input SMILES string
+        target_count: Target number of modifications to generate
+        
+    Returns:
+        List of modified SMILES (up to target_count, deduplicated)
+    """
+    import random
+    
+    all_mods = set()
+    seen_parents = {smiles}
+    
+    # Level 1: Direct modifications
+    level1 = apply_all_modifications(smiles)
+    all_mods.update(level1)
+    logger.info(f"Level 1 modifications: {len(level1)} unique candidates")
+    
+    # If we have enough, return early
+    if len(all_mods) >= target_count:
+        result = list(all_mods)
+        random.shuffle(result)
+        return result[:target_count]
+    
+    # Level 2: Modifications of modifications (depth-2)
+    # Sample from level 1 to avoid combinatorial explosion
+    level1_sample = random.sample(level1, min(len(level1), 5)) if level1 else []
+    
+    for parent in level1_sample:
+        if parent in seen_parents:
+            continue
+        seen_parents.add(parent)
+        
+        try:
+            level2 = apply_all_modifications(parent)
+            # Filter out already seen
+            new_mods = [m for m in level2 if m not in all_mods and m != smiles]
+            all_mods.update(new_mods)
+            
+            if len(all_mods) >= target_count:
+                break
+        except Exception as e:
+            logger.debug(f"Failed level 2 modification from {parent}: {e}")
+            continue
+    
+    logger.info(f"Total modifications after level 2: {len(all_mods)} candidates")
+    
+    # Shuffle for diversity
+    result = list(all_mods)
+    random.shuffle(result)
+    return result[:target_count]

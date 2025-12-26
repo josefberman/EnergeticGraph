@@ -23,7 +23,7 @@ class BeamSearchConfig:
 @dataclass
 class ScoringConfig:
     """Configuration for scoring function."""
-    # Property weights for MAE calculation (should sum to 1.0)
+    # Property weights for MAPE calculation (should sum to 1.0)
     property_weights: dict = field(default_factory=lambda: {
         'Density': 0.25,
         'Det Velocity': 0.25,
@@ -32,29 +32,21 @@ class ScoringConfig:
     })
     
     # Multi-objective weights
-    mae_weight: float = 0.7  # Weight for property accuracy
+    mape_weight: float = 0.7  # Weight for property accuracy (MAPE)
     feasibility_weight: float = 0.3  # Weight for synthetic feasibility
-    
-    # Property normalization ranges (for scaling)
-    property_ranges: dict = field(default_factory=lambda: {
-        'Density': (1.0, 2.5),  # g/cm³
-        'Det Velocity': (6000.0, 10000.0),  # m/s
-        'Det Pressure': (10.0, 50.0),  # GPa
-        'Hf solid': (-500.0, 500.0)  # kJ/mol
-    })
 
 
 @dataclass
 class RAGConfig:
     """Configuration for RAG-based modification strategy."""
     enable_rag: bool = True  # Enabled by default (using FAISS vectorstore)
-    arxiv_max_results: int = 5  # Max papers to retrieve per query
+    arxiv_max_results: int = 20  # Max papers to retrieve per query
     openai_api_key: Optional[str] = field(default_factory=lambda: os.getenv('OPENAI_API_KEY'))  # Auto-load from .env
     chroma_persist_directory: str = "./chroma_db"  # ChromaDB storage (not used with FAISS)
     embedding_model: str = "text-embedding-3-small"  # OpenAI embedding model
     llm_model: str = "gpt-4o-mini"  # ChatOpenAI model
     llm_temperature: float = 0.3  # LLM temperature
-    max_modifications_per_call: int = 3  # Max SMILES to generate per RAG call
+    max_modifications_per_call: int = 10  # Max SMILES to generate per RAG call
 
 
 @dataclass

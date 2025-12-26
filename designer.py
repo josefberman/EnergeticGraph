@@ -54,11 +54,10 @@ class EnergeticDesigner:
         # Load dataset
         self.dataset = load_dataset(self.config.system.dataset_path)
         
-        # Find best seed molecule
+        # Find best seed molecule (uses MAPE distance)
         self.seed = find_closest_match(
             self.dataset,
-            self.target,
-            self.config.scoring.property_ranges
+            self.target
         )
         
         logger.info(f"Initialization complete. Seed: {self.seed.smiles}")

@@ -26,76 +26,22 @@ def normalize_property(value: float, prop_range: tuple) -> float:
     return (value - min_val) / (max_val - min_val)
 
 
-def calculate_mae(predicted_props: Dict[str, float], 
-                  target_props: Dict[str, float],
-                  property_weights: Dict[str, float],
-                  property_ranges: Dict[str, tuple]) -> float:
+def calculate_mape(predicted_props: Dict[str, float], 
+                   target_props: Dict[str, float],
+                   property_weights: Dict[str, float] = None) -> float:
     """
-    Calculate weighted Mean Absolute Error between predicted and target properties.
+    Calculate weighted Mean Absolute Percentage Error between predicted and target properties.
+    
+    MAPE = (1/n) * Σ(|predicted - target| / |target|) * 100
     
     Args:
         predicted_props: Predicted property values
         target_props: Target property values
         property_weights: Weight for each property (should sum to 1.0)
-        property_ranges: Normalization ranges for each property
         
     Returns:
-        Weighted MAE (lower is better)
+        Weighted MAPE as percentage (lower is better)
     """
-    mae = 0.0
-    total_weight = 0.0
-    
-    for prop_name in target_props.keys():
-        if prop_name in predicted_props and predicted_props[prop_name] is not None:
-            # Get values
-            pred = predicted_props[prop_name]
-            target = target_props[prop_name]
-            weight = property_weights.get(prop_name, 0.25)
-            prop_range = property_ranges.get(prop_name, (0, 1))
-            
-            # Normalize both values
-            pred_norm = normalize_property(pred, prop_range)
-            target_norm = normalize_property(target, prop_range)
-            
-            # Calculate absolute error
-            error = abs(pred_norm - target_norm)
-            mae += weight * error
-            total_weight += weight
-        else:
-            logger.warning(f"Property {prop_name} missing in predictions")
-    
-    # Normalize by total weight
-    if total_weight > 0:
-        mae /= total_weight
-    
-    return mae
-
-
-def calculate_total_score(predicted_props: Dict[str, float],
-                          target_props: Dict[str, float],
-                          feasibility: float,
-                          mae_weight: float = 0.7,
-                          feasibility_weight: float = 0.3,
-                          property_weights: Dict[str, float] = None,
-                          property_ranges: Dict[str, tuple] = None) -> float:
-    """
-    Calculate total score combining MAE and feasibility.
-    
-    Score = mae_weight * MAE + feasibility_weight * (1 - feasibility)
-    
-    Args:
-        predicted_props: Predicted properties
-        target_props: Target properties
-        feasibility: Feasibility score (0-1, higher is better)
-        mae_weight: Weight for property accuracy (default 0.7)
-        feasibility_weight: Weight for feasibility (default 0.3)
-        property_weights: Weights for each property in MAE calculation
-        property_ranges: Normalization ranges for properties
-        
-    Returns:
-        Total score (lower is better)
-    """
-    # Default weights and ranges
     if property_weights is None:
         property_weights = {
             'Density': 0.25,
@@ -104,22 +50,76 @@ def calculate_total_score(predicted_props: Dict[str, float],
             'Hf solid': 0.25
         }
     
-    if property_ranges is None:
-        property_ranges = {
-            'Density': (1.0, 2.5),
-            'Det Velocity': (6000.0, 10000.0),
-            'Det Pressure': (10.0, 50.0),
-            'Hf solid': (-500.0, 500.0)
+    mape = 0.0
+    total_weight = 0.0
+    
+    for prop_name in target_props.keys():
+        if prop_name in predicted_props and predicted_props[prop_name] is not None:
+            pred = predicted_props[prop_name]
+            target = target_props[prop_name]
+            weight = property_weights.get(prop_name, 0.25)
+            
+            # Calculate percentage error relative to target
+            if abs(target) > 1e-10:  # Avoid division by zero
+                percentage_error = abs(pred - target) / abs(target) * 100
+            else:
+                # If target is near zero, use absolute error
+                percentage_error = abs(pred - target) * 100
+            
+            mape += weight * percentage_error
+            total_weight += weight
+        else:
+            logger.warning(f"Property {prop_name} missing in predictions")
+    
+    # Normalize by total weight
+    if total_weight > 0:
+        mape /= total_weight
+    
+    return mape
+
+
+def calculate_total_score(predicted_props: Dict[str, float],
+                          target_props: Dict[str, float],
+                          feasibility: float,
+                          mape_weight: float = 0.7,
+                          feasibility_weight: float = 0.3,
+                          property_weights: Dict[str, float] = None) -> float:
+    """
+    Calculate total score combining MAPE and feasibility.
+    
+    Score = mape_weight * (MAPE/100) + feasibility_weight * (1 - feasibility)
+    
+    Args:
+        predicted_props: Predicted properties
+        target_props: Target properties
+        feasibility: Feasibility score (0-1, higher is better)
+        mape_weight: Weight for property accuracy (default 0.7)
+        feasibility_weight: Weight for feasibility (default 0.3)
+        property_weights: Weights for each property in MAPE calculation
+        
+    Returns:
+        Total score (lower is better)
+    """
+    # Default weights
+    if property_weights is None:
+        property_weights = {
+            'Density': 0.25,
+            'Det Velocity': 0.25,
+            'Det Pressure': 0.25,
+            'Hf solid': 0.25
         }
     
-    # Calculate MAE
-    mae = calculate_mae(predicted_props, target_props, property_weights, property_ranges)
+    # Calculate MAPE (as percentage)
+    mape = calculate_mape(predicted_props, target_props, property_weights)
+    
+    # Convert MAPE percentage to 0-1 scale for scoring (cap at 100%)
+    mape_normalized = min(mape / 100.0, 1.0)
     
     # Calculate feasibility penalty (1 - feasibility)
     # Higher feasibility = lower penalty
     feasibility_penalty = 1.0 - feasibility
     
     # Combined score
-    total_score = mae_weight * mae + feasibility_weight * feasibility_penalty
+    total_score = mape_weight * mape_normalized + feasibility_weight * feasibility_penalty
     
     return total_score
