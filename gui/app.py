@@ -77,21 +77,24 @@ class ProgressReporter:
             'image': img_path
         })
     
-    def report_iteration(self, iteration, candidates, beam, top_k):
+    def report_iteration(self, iteration, candidates, beam, top_k, mape_calculator=None):
         """Report iteration progress."""
-        # Generate images for top candidates
+        # Generate images for all candidates (already limited to beam_width by caller)
         candidate_data = []
-        for i, candidate in enumerate(candidates[:20]):  # Limit to top 20
+        for i, candidate in enumerate(candidates):
             img_path = generate_molecule_image(
                 candidate.smiles, 
                 f'iter_{iteration}_cand_{i}.png',
                 size=(150, 150)
             )
+            # Calculate MAPE if calculator provided
+            mape = mape_calculator(candidate) if mape_calculator else 0
             candidate_data.append({
                 'smiles': candidate.smiles,
                 'properties': candidate.properties,
                 'feasibility': candidate.feasibility,
                 'score': candidate.score,
+                'mape': mape,
                 'image': img_path
             })
         
@@ -120,7 +123,7 @@ class ProgressReporter:
         self.queue.put({'type': 'complete'})
 
 
-def run_beam_search(target_props, enable_rag, beam_width, top_k, max_iter):
+def run_beam_search(target_props, enable_rag, beam_width, top_k, max_iter, mape_threshold_pct):
     """Run beam search in background thread."""
     global current_search, progress_queue
     
@@ -178,7 +181,30 @@ def run_beam_search(target_props, enable_rag, beam_width, top_k, max_iter):
         beam = [designer.seed]
         best_ever = designer.seed
         
+        def calculate_mape_percentage(molecule, target):
+            """Calculate MAPE as percentage of target values."""
+            target_dict = target.to_dict()
+            props = molecule.properties
+            
+            errors = []
+            for key in ['Density', 'Det Velocity', 'Det Pressure', 'Hf solid']:
+                if key in target_dict and key in props:
+                    target_val = abs(target_dict[key])
+                    if target_val > 0:
+                        error_pct = abs(props[key] - target_dict[key]) / target_val * 100
+                        errors.append(error_pct)
+            
+            return sum(errors) / len(errors) if errors else 100.0
+        
+        def get_mape_for_sorting(molecule):
+            """Helper to get MAPE for sorting - lower is better."""
+            return calculate_mape_percentage(molecule, target)
+        
+        print(f"[DEBUG] Starting beam search loop, max_iterations={config.beam_search.max_iterations}")
+        print(f"[DEBUG] Initial beam size: {len(beam)}, best_ever: {best_ever.smiles if best_ever else 'None'}")
+        
         for iteration in range(1, config.beam_search.max_iterations + 1):
+            print(f"[DEBUG] === ITERATION {iteration} START ===")
             progress_queue.put({
                 'type': 'status', 
                 'message': f'Iteration {iteration}/{config.beam_search.max_iterations}'
@@ -187,34 +213,57 @@ def run_beam_search(target_props, enable_rag, beam_width, top_k, max_iter):
             # Generate candidates
             all_candidates = []
             for parent in beam:
+                print(f"[DEBUG] Processing parent: {parent.smiles}")
                 from agents.worker_agent import ChemistAgent
                 agent = ChemistAgent(parent, target, config)
                 candidates = agent.generate_variations()
+                print(f"[DEBUG] Generated {len(candidates)} candidates from parent")
                 all_candidates.extend(candidates)
             
+            print(f"[DEBUG] Total candidates this iteration: {len(all_candidates)}")
+            
             if not all_candidates:
+                print(f"[DEBUG] No candidates generated! Exiting loop.")
                 break
             
-            # Filter and rank
+            # Filter and rank BY MAPE (lower is better)
             feasible = [c for c in all_candidates if c.is_feasible]
             unique = {c.smiles: c for c in feasible}.values()
-            sorted_candidates = sorted(unique, key=lambda x: x.score)
+            sorted_candidates = sorted(unique, key=get_mape_for_sorting)
             
-            # Update beam
-            beam = sorted_candidates[:config.beam_search.top_k]
+            # Update beam - select top_k by MAPE
+            beam = list(sorted_candidates)[:config.beam_search.top_k]
             
-            # Update best
-            if beam and beam[0].score < best_ever.score:
-                improvement = best_ever.score - beam[0].score
-                best_ever = beam[0]
-                reporter.report_best(best_ever)
+            # Update best_ever based on MAPE - check ALL candidates, not just beam
+            if sorted_candidates:
+                # sorted_candidates[0] has the best (lowest) MAPE
+                best_this_iteration = list(sorted_candidates)[0]
+                best_this_mape = get_mape_for_sorting(best_this_iteration)
+                best_ever_mape = get_mape_for_sorting(best_ever)
                 
-                if improvement < config.beam_search.convergence_threshold:
-                    progress_queue.put({'type': 'status', 'message': 'Converged!'})
+                if best_this_mape < best_ever_mape:
+                    best_ever = best_this_iteration
+                    reporter.report_best(best_ever)
+                
+                # Check MAPE convergence
+                mape_pct = calculate_mape_percentage(best_ever, target)
+                print(f"[DEBUG] MAPE check: mape_pct={mape_pct}, threshold={mape_threshold_pct}, condition={mape_pct} <= {mape_threshold_pct}")
+                progress_queue.put({
+                    'type': 'status',
+                    'message': f'MAPE: {mape_pct:.2f}% | Threshold: {mape_threshold_pct}%'
+                })
+                
+                if mape_pct <= mape_threshold_pct:
+                    print(f"[DEBUG] CONVERGENCE TRIGGERED: {mape_pct} <= {mape_threshold_pct}")
+                    progress_queue.put({
+                        'type': 'status',
+                        'message': f'Converged! MAPE {mape_pct:.2f}% ≤ {mape_threshold_pct}%'
+                    })
                     break
             
-            # Report iteration with top_k
-            reporter.report_iteration(iteration, sorted_candidates, beam, top_k)
+            # Report iteration with exactly beam_width candidates (not all)
+            display_candidates = list(sorted_candidates)[:beam_width]
+            reporter.report_iteration(iteration, display_candidates, beam, top_k, mape_calculator=get_mape_for_sorting)
         
         # Report final best molecule
         reporter.report_best(best_ever)
@@ -250,11 +299,12 @@ def start_search():
     beam_width = int(data.get('beam_width', 10))
     top_k = int(data.get('top_k', 5))
     max_iter = int(data.get('max_iter', 10))
+    mape_threshold_pct = float(data.get('mape_threshold', 1.0))
     
     # Start search in background
     thread = threading.Thread(
         target=run_beam_search,
-        args=(target_props, enable_rag, beam_width, top_k, max_iter),
+        args=(target_props, enable_rag, beam_width, top_k, max_iter, mape_threshold_pct),
         daemon=True
     )
     thread.start()

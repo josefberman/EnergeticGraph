@@ -18,6 +18,7 @@ class MolecularDesignUI {
         this.beamWidthInput = document.getElementById('beam-width');
         this.topKInput = document.getElementById('top-k');
         this.maxIterInput = document.getElementById('max-iter');
+        this.mapeThresholdInput = document.getElementById('mape-threshold');
         this.runButton = document.getElementById('run-btn');
         this.statusMessage = document.getElementById('status-message');
 
@@ -25,6 +26,8 @@ class MolecularDesignUI {
         this.iterationCount = document.getElementById('iteration-count');
         this.candidateCount = document.getElementById('candidate-count');
         this.bestScore = document.getElementById('best-score');
+        this.bestMAPE = document.getElementById('best-mape');
+        this.bestFeasibility = document.getElementById('best-feasibility');
         this.candidatesContainer = document.getElementById('candidates-container');
         this.seedMolecule = document.getElementById('seed-molecule');
         this.targetDisplay = document.getElementById('target-display');
@@ -67,7 +70,8 @@ class MolecularDesignUI {
             enable_rag: this.enableRagInput.checked,
             beam_width: parseInt(this.beamWidthInput.value),
             top_k: parseInt(this.topKInput.value),
-            max_iter: parseInt(this.maxIterInput.value)
+            max_iter: parseInt(this.maxIterInput.value),
+            mape_threshold: parseFloat(this.mapeThresholdInput.value)
         };
 
         // Validate inputs
@@ -168,7 +172,7 @@ class MolecularDesignUI {
     }
 
     displayTarget(properties) {
-        this.targetProperties = properties; // Store for MAE calculation
+        this.targetProperties = properties; // Store for MAPE calculation
 
         this.targetDisplay.innerHTML = `
             <div class="property-row">
@@ -213,24 +217,28 @@ class MolecularDesignUI {
 
         const topK = data.top_k || parseInt(this.topKInput.value);
 
+        // Sort candidates by MAPE (lower is better) before displaying
+        const sortedCandidates = [...data.candidates].sort((a, b) => a.mape - b.mape);
+
         // Create iteration row with horizontal scroll
         const rowHTML = `
             <div class="iteration-row fade-in">
                 <div class="iteration-header">
                     <h3 class="iteration-title">Iteration ${data.iteration}</h3>
-                    <span class="iteration-stats">${data.candidates.length} candidates | Top ${topK} selected</span>
+                    <span class="iteration-stats">${sortedCandidates.length} candidates | Top ${topK} by MAPE</span>
                 </div>
                 <div class="candidates-scroll">
-                    ${data.candidates.map((cand, i) => {
+                    ${sortedCandidates.map((cand, i) => {
             const isSelected = i < topK;
             return `
                             <div class="candidate-card ${isSelected ? 'selected' : ''}" 
                                  data-index="${i}"
                                  data-score="${cand.score}"
+                                 data-mape="${cand.mape}"
                                  data-feasibility="${cand.feasibility}"
                                  data-props='${JSON.stringify(cand.properties)}'>
                                 ${cand.image ? `<img src="${cand.image}" class="candidate-img" alt="Candidate ${i + 1}">` : ''}
-                                <div class="candidate-score">Score: ${cand.score.toFixed(4)}</div>
+                                <div class="candidate-score">MAPE: ${cand.mape.toFixed(2)}%</div>
                                 <div class="candidate-feasibility">${(cand.feasibility * 100).toFixed(0)}%</div>
                             </div>
                         `;
@@ -262,8 +270,8 @@ class MolecularDesignUI {
         const properties = JSON.parse(card.dataset.props);
         const isSelected = card.classList.contains('selected');
 
-        // Calculate MAE
-        const mae = this.calculateMAE(properties);
+        // Calculate MAPE
+        const mape = this.calculateMAPE(properties);
 
         // Position popup next to card
         const rect = card.getBoundingClientRect();
@@ -287,8 +295,8 @@ class MolecularDesignUI {
                 <div class="popup-value">${(feasibility * 100).toFixed(1)}%</div>
             </div>
             <div class="popup-section">
-                <div class="popup-label">MAE (vs Target)</div>
-                <div class="popup-value">${mae.toFixed(3)}</div>
+                <div class="popup-label">MAPE (vs Target)</div>
+                <div class="popup-value">${mape.toFixed(2)}%</div>
             </div>
             <div class="popup-section">
                 <div class="popup-label">Properties</div>
@@ -327,7 +335,7 @@ class MolecularDesignUI {
         }, 10);
     }
 
-    calculateMAE(properties) {
+    calculateMAPE(properties) {
         if (!this.targetProperties) return 0;
 
         const propertyNames = ['Density', 'Det Velocity', 'Det Pressure', 'Hf solid'];
@@ -336,9 +344,14 @@ class MolecularDesignUI {
 
         propertyNames.forEach(prop => {
             if (this.targetProperties[prop] !== undefined && properties[prop] !== undefined) {
-                const error = Math.abs(this.targetProperties[prop] - properties[prop]);
-                totalError += error;
-                count++;
+                const target = this.targetProperties[prop];
+                const pred = properties[prop];
+                // MAPE: |actual - predicted| / |actual| * 100
+                if (Math.abs(target) > 1e-10) {
+                    const percentError = Math.abs(target - pred) / Math.abs(target) * 100;
+                    totalError += percentError;
+                    count++;
+                }
             }
         });
 
@@ -347,6 +360,13 @@ class MolecularDesignUI {
 
     displayBestMolecule(data) {
         this.bestScore.textContent = data.score.toFixed(4);
+
+        // Calculate and display MAPE
+        const mape = this.calculateMAPE(data.properties);
+        this.bestMAPE.textContent = mape.toFixed(2) + '%';
+
+        // Display feasibility
+        this.bestFeasibility.textContent = (data.feasibility * 100).toFixed(0) + '%';
 
         this.bestMolecule.innerHTML = `
             <img src="${data.image}" alt="Best Molecule" class="molecule-img">

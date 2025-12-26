@@ -59,6 +59,14 @@
                     <input type="number" id="max-iter" value="10" min="1" max="50">
                 </div>
 
+                <div class="input-group">
+                    <label for="mape-threshold">MAPE Convergence Threshold (%)</label>
+                    <input type="number" id="mape-threshold" step="0.1" value="1.0" min="0.1" max="10">
+                    <small style="color: var(--text-muted); font-size: 0.8rem; margin-top: 0.25rem; display: block;">
+                        Stop when MAPE is within this % of target
+                    </small>
+                </div>
+
                 <div class="toggle-group">
                     <label class="toggle-label">
                         <span>Enable RAG</span>
@@ -91,6 +99,14 @@
                     <div class="stat-card">
                         <span class="stat-label">Best Score</span>
                         <span class="stat-value" id="best-score">-</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Best MAPE</span>
+                        <span class="stat-value" id="best-mape">-</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Feasibility</span>
+                        <span class="stat-value" id="best-feasibility">-</span>
                     </div>
                 </div>
 
