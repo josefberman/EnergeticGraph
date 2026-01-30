@@ -9,8 +9,7 @@ from data_structures import MoleculeState, PropertyTarget
 from modules.prediction import PropertyPredictor
 from modules.feasibility import calculate_feasibility
 from modules.scoring import calculate_total_score
-from modules.strategy_pool import StrategyPoolModifier
-from modules.rag_strategy import default_modification_strategy
+from modules.strategy_pool import StrategyPoolModifier, default_modification_strategy
 from config import Config
 
 logger = logging.getLogger(__name__)
