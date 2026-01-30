@@ -9,7 +9,8 @@ from data_structures import MoleculeState, PropertyTarget
 from modules.prediction import PropertyPredictor
 from modules.feasibility import calculate_feasibility
 from modules.scoring import calculate_total_score
-from modules.rag_strategy import RAGModificationStrategy, default_modification_strategy
+from modules.strategy_pool import StrategyPoolModifier
+from modules.rag_strategy import default_modification_strategy
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 class ChemistAgent:
     """
-    Worker agent that generates molecular variations using RAG or default strategies.
+    Worker agent that generates molecular variations using strategy pool.
     """
     
     def __init__(self, parent_molecule: MoleculeState, 
@@ -38,14 +39,9 @@ class ChemistAgent:
         # Initialize components
         self.predictor = PropertyPredictor(config.system.models_directory)
         
-        # Initialize RAG strategy if enabled
-        self.rag_strategy = None
-        if config.rag.enable_rag:
-            try:
-                self.rag_strategy = RAGModificationStrategy(config.rag)
-                logger.info("RAG strategy initialized")
-            except Exception as e:
-                logger.warning(f"Failed to initialize RAG: {e}. Will use default strategy.")
+        # Initialize strategy pool modifier
+        self.strategy_modifier = StrategyPoolModifier(config)
+        logger.info("Initialized ChemistAgent with strategy pool")
     
     def analyze_property_gap(self) -> Dict[str, float]:
         """
@@ -70,78 +66,82 @@ class ChemistAgent:
     
     def generate_variations(self) -> List[MoleculeState]:
         """
-        Generate molecular variations using RAG (if enabled) or default strategy.
+        Generate molecular variations using strategy pool.
         
         Workflow:
         1. Analyze property gap
-        2. Try RAG strategy if enabled to get up to beam_width modifications
-        3. Fill remaining slots with default strategy if needed
+        2. Use strategy pool to get targeted modifications
+        3. Supplement with default strategy if needed
         4. Evaluate all candidates
-        5. Return exactly beam_width MoleculeState objects (or fewer if evaluation fails)
+        5. Return up to beam_width MoleculeState objects
         
         Returns:
-            List of candidate MoleculeState objects (target: beam_width candidates)
+            List of candidate MoleculeState objects
         """
         target_count = self.config.beam_search.beam_width
         
         # 1. Analyze property gap
         property_gap = self.analyze_property_gap()
         
-        # 2. EXHAUSTIVE generation loop - keep trying until we reach beam_width
+        # 2. Collect candidate SMILES
         candidates = []
-        seen = set()  # Track already-seen SMILES to avoid duplicates
-        max_attempts = 10  # Increased for exhaustive search
+        seen = set()
+        max_attempts = 5
         attempt = 0
         
-        logger.info(f"Starting EXHAUSTIVE candidate generation for beam_width={target_count}")
+        logger.info(f"Generating candidates for beam_width={target_count}")
         
         while len(candidates) < target_count and attempt < max_attempts:
             attempt += 1
             needed = target_count - len(candidates)
-            logger.info(f"Exhaustive attempt {attempt}/{max_attempts}: Need {needed} more (have {len(candidates)})")
+            logger.info(f"Attempt {attempt}/{max_attempts}: Need {needed} more (have {len(candidates)})")
             
-            # Request much more than we need
-            request_count = max(needed * 5, target_count * 3)  
+            # Request more than we need to account for filtering
+            request_count = max(needed * 3, target_count * 2)
             batch_smiles = []
             
-            # STRATEGY 1: RAG with multiple queries (if enabled)
-            if self.config.rag.enable_rag and self.rag_strategy is not None:
-                try:
-                    rag_smiles = self.rag_strategy.rag_modification_strategy(
-                        self.parent.smiles,
-                        property_gap,
-                        target_count=request_count
-                    )
-                    batch_smiles.extend(rag_smiles)
-                    logger.info(f"RAG returned {len(rag_smiles)} modifications")
-                except Exception as e:
-                    logger.warning(f"RAG strategy failed: {e}")
-
-            # STRATEGY 2: ALWAYS run default strategy
+            # PRIMARY: Strategy pool modifications
             try:
-                default_smiles = default_modification_strategy(
+                pool_smiles = self.strategy_modifier.apply_strategies(
                     self.parent.smiles,
                     property_gap,
                     target_count=request_count
                 )
-                batch_smiles.extend(default_smiles)
-                logger.info(f"Default strategy added {len(default_smiles)} modifications")
+                batch_smiles.extend(pool_smiles)
+                logger.info(f"Strategy pool returned {len(pool_smiles)} modifications")
             except Exception as e:
-                logger.warning(f"Default strategy failed: {e}")
+                logger.warning(f"Strategy pool failed: {e}")
             
-            # STRATEGY 3: Direct diverse modifications
-            from modules.modification_tools import generate_diverse_modifications, apply_all_modifications
-            try:
-                diverse_smiles = generate_diverse_modifications(self.parent.smiles, target_count=request_count)
-                batch_smiles.extend(diverse_smiles)
-                logger.info(f"Diverse generation added {len(diverse_smiles)} modifications")
-            except Exception as e:
-                logger.warning(f"Diverse generation failed: {e}")
+            # FALLBACK: Default strategy
+            if len(batch_smiles) < needed:
+                try:
+                    default_smiles = default_modification_strategy(
+                        self.parent.smiles,
+                        property_gap,
+                        target_count=request_count
+                    )
+                    batch_smiles.extend(default_smiles)
+                    logger.info(f"Default strategy added {len(default_smiles)} modifications")
+                except Exception as e:
+                    logger.warning(f"Default strategy failed: {e}")
+            
+            # ADDITIONAL: Direct diverse modifications
+            if len(batch_smiles) < needed:
+                from modules.modification_tools import generate_diverse_modifications
+                try:
+                    diverse_smiles = generate_diverse_modifications(
+                        self.parent.smiles, 
+                        target_count=request_count
+                    )
+                    batch_smiles.extend(diverse_smiles)
+                    logger.info(f"Diverse generation added {len(diverse_smiles)} modifications")
+                except Exception as e:
+                    logger.warning(f"Diverse generation failed: {e}")
             
             # Filter to unique unseen SMILES
             unique_batch = []
             for s in batch_smiles:
-                if s not in seen and s != self.parent.smiles:
+                if s not in seen and s != self.parent.smiles and '.' not in s:
                     seen.add(s)
                     unique_batch.append(s)
             
@@ -155,19 +155,18 @@ class ChemistAgent:
                 if candidate is not None:
                     candidates.append(candidate)
             
-            # STRATEGY 4: Recursive expansion from existing candidates
+            # Recursive expansion from existing candidates if needed
             if len(candidates) < target_count and len(candidates) > 0:
-                logger.info(f"Recursive expansion from {len(candidates)} existing candidates")
+                logger.info(f"Expanding from {len(candidates)} existing candidates")
+                from modules.modification_tools import apply_all_modifications
                 
-                # Expand from ALL existing candidates, not just top 5
-                for existing in candidates:
+                for existing in candidates[:5]:  # Limit expansion base
                     if len(candidates) >= target_count:
                         break
                     try:
-                        # Level 1 expansion
                         expanded = apply_all_modifications(existing.smiles)
                         for exp_smiles in expanded:
-                            if exp_smiles not in seen and exp_smiles != self.parent.smiles:
+                            if exp_smiles not in seen and '.' not in exp_smiles:
                                 seen.add(exp_smiles)
                                 exp_candidate = self.evaluate_candidate(exp_smiles)
                                 if exp_candidate is not None:
@@ -176,37 +175,13 @@ class ChemistAgent:
                                         break
                     except Exception as e:
                         logger.debug(f"Expansion failed: {e}")
-            
-            # STRATEGY 5: Deep recursive expansion (depth-2) if still not enough
-            if len(candidates) < target_count and attempt >= 3:
-                logger.info(f"Deep expansion (depth-2) - still need {target_count - len(candidates)} more")
-                for existing in candidates[:min(3, len(candidates))]:
-                    if len(candidates) >= target_count:
-                        break
-                    try:
-                        level1 = apply_all_modifications(existing.smiles)
-                        for l1_smiles in level1[:3]:
-                            if len(candidates) >= target_count:
-                                break
-                            level2 = apply_all_modifications(l1_smiles)
-                            for l2_smiles in level2[:5]:
-                                if l2_smiles not in seen:
-                                    seen.add(l2_smiles)
-                                    candidate = self.evaluate_candidate(l2_smiles)
-                                    if candidate is not None:
-                                        candidates.append(candidate)
-                                        if len(candidates) >= target_count:
-                                            break
-                    except Exception as e:
-                        logger.debug(f"Deep expansion failed: {e}")
         
         if not candidates:
-            logger.warning(f"No valid candidates generated for {self.parent.smiles} after {attempt} attempts")
+            logger.warning(f"No valid candidates generated for {self.parent.smiles}")
             return []
         
-        # Return exactly target_count candidates (truncate if we have more)
         final_candidates = candidates[:target_count]
-        logger.info(f"EXHAUSTIVE SEARCH: Returning {len(final_candidates)} candidates (target: {target_count})")
+        logger.info(f"Returning {len(final_candidates)} candidates (target: {target_count})")
         return final_candidates
     
     def evaluate_candidate(self, smiles: str) -> MoleculeState:
@@ -215,20 +190,19 @@ class ChemistAgent:
         
         Args:
             smiles: Candidate SMILES string
-            
+        
         Returns:
             MoleculeState object or None if invalid
         """
         try:
-            # Skip multi-molecule SMILES (containing dots)
+            # Skip multi-molecule SMILES
             if '.' in smiles:
-                logger.debug(f"Skipping multi-molecule SMILES: {smiles}")
                 return None
             
             # Validate SMILES
             mol = Chem.MolFromSmiles(smiles)
             if mol is None:
-                logger.debug(f"Invalid SMILES string: {smiles}")
+                logger.debug(f"Invalid SMILES: {smiles}")
                 return None
             
             # Canonicalize

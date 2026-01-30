@@ -37,16 +37,16 @@ class ScoringConfig:
 
 
 @dataclass
-class RAGConfig:
-    """Configuration for RAG-based modification strategy."""
-    enable_rag: bool = True  # Enabled by default (using FAISS vectorstore)
-    arxiv_max_results: int = 20  # Max papers to retrieve per query
-    openai_api_key: Optional[str] = field(default_factory=lambda: os.getenv('OPENAI_API_KEY'))  # Auto-load from .env
-    chroma_persist_directory: str = "./chroma_db"  # ChromaDB storage (not used with FAISS)
-    embedding_model: str = "text-embedding-3-small"  # OpenAI embedding model
-    llm_model: str = "gpt-4o-mini"  # ChatOpenAI model
-    llm_temperature: float = 0.3  # LLM temperature
-    max_modifications_per_call: int = 10  # Max SMILES to generate per RAG call
+class StrategyPoolConfig:
+    """Configuration for strategy pool-based modifications."""
+    # Maximum modifications per strategy application
+    max_modifications_per_strategy: int = 10
+    
+    # Enable supplementary diverse modifications
+    enable_diverse_supplement: bool = True
+    
+    # Minimum feasibility threshold for candidates
+    min_feasibility: float = 0.5
 
 
 @dataclass
@@ -64,5 +64,11 @@ class Config:
     """Master configuration combining all sub-configs."""
     beam_search: BeamSearchConfig = field(default_factory=BeamSearchConfig)
     scoring: ScoringConfig = field(default_factory=ScoringConfig)
-    rag: RAGConfig = field(default_factory=RAGConfig)
+    strategy_pool: StrategyPoolConfig = field(default_factory=StrategyPoolConfig)
     system: SystemConfig = field(default_factory=SystemConfig)
+    
+    # Legacy compatibility - kept for any code that references config.rag
+    @property
+    def rag(self):
+        """Legacy property for backward compatibility."""
+        return self.strategy_pool
