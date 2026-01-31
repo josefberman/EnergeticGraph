@@ -9,7 +9,7 @@
 The **Energetic Molecular Design System (EMDS)** is an AI-driven framework designed to accelerate the discovery of novel energetic materials (explosives, propellants). By combining a **literature-informed Strategy Pool** with a **Beam Search** optimization algorithm, EMDS navigates the vast chemical space to identify molecules that satisfy stringent trade-offs between performance (detonation velocity/pressure) and feasibility (stability, synthetic accessibility).
 
 ### Key Innovations
-- **RAG Property Retrieval**: Searches scientific literature (OpenAlex, Crossref, Semantic Scholar) for known property values before ML prediction
+- **RAG Property Retrieval**: Searches scientific literature (OpenAlex, Crossref, Semantic Scholar) for known property values before ML prediction, with full citation tracking and CLI display
 - **81-Tuple Strategy Pool**: Literature-backed chemical transformations indexed by property direction requirements
 - **MAPE-Based Optimization**: Mean Absolute Percentage Error scoring for direct property targeting
 - **Multi-level Feasibility Gating**: SAScore + valency validation ensures synthetic plausibility
@@ -516,12 +516,10 @@ flowchart TB
     end
     
     subgraph NameConversion["Step 1: SMILES → Name"]
-        SMILES --> Cache1{In Cache?}
-        Cache1 -->|Yes| Name1[Cached Name]
-        Cache1 -->|No| CommonDB[Common Names DB]
+        SMILES --> CommonDB[Common Names DB]
         CommonDB -->|Not Found| PubChem[PubChem API]
         PubChem -->|Not Found| Systematic[Generate Systematic]
-        CommonDB -->|Found| Name1
+        CommonDB -->|Found| Name1[Chemical Name]
         PubChem -->|Found| Name1
         Systematic --> Name1
     end
@@ -540,6 +538,7 @@ flowchart TB
         Papers --> LLM[LLM Extraction<br/>Optional]
         Regex --> Found[Found Properties]
         LLM --> Found
+        Papers --> Citations[Paper Citations]
     end
     
     subgraph Fallback["Step 4: ML Fallback"]
@@ -549,10 +548,16 @@ flowchart TB
         MLPredict --> Output[Complete<br/>Properties]
     end
     
+    subgraph Display["Step 5: CLI Output"]
+        Citations --> CLI[Display Citations<br/>in Terminal]
+        Output --> CLI
+    end
+    
     style NameConversion fill:#e3f2fd,stroke:#1565c0
     style Search fill:#fff3e0,stroke:#ef6c00
     style Extract fill:#e8f5e9,stroke:#2e7d32
     style Fallback fill:#fce4ec,stroke:#c2185b
+    style Display fill:#f3e5f5,stroke:#7b1fa2
 ```
 
 ### 7.2 SMILES-to-Name Conversion
@@ -588,11 +593,30 @@ classDiagram
         -_query_pubchem(smiles) str
         -_generate_systematic_name(mol) str
     }
+    
+    class PaperCitation {
+        +str title
+        +List~str~ authors
+        +str doi
+        +str source_db
+        +List~str~ properties_found
+    }
+    
+    class RAGResult {
+        +str smiles
+        +str chemical_name
+        +Dict properties
+        +int papers_searched
+        +int papers_with_hits
+        +List~PaperCitation~ citations
+    }
+    
+    RAGResult --> PaperCitation : contains
 ```
 
 ### 7.3 Literature Search
 
-Papers are searched from two sources:
+Papers are searched from three sources:
 
 | Source | API Endpoint | Focus |
 |--------|--------------|-------|
@@ -647,6 +671,24 @@ Each property tracks its source for transparency:
     'Hf solid': 'predicted (XGBoost)'
 }
 ```
+
+### 7.7 CLI Citation Display
+
+When RAG finds properties from literature, citations are displayed in the terminal:
+
+```
+  📚 RAG Literature References for Cc1ccc(cc1[N+](=O)[O-])[N+](=O)[O-]...:
+     [1] Synthesis and characterization of novel energetic materials...
+         Authors: Klapötke et al.
+         DOI: https://doi.org/10.1021/acs.jpca.2019
+         Source: OpenAlex | Properties: Density, Det Velocity
+     [2] Computational study of detonation properties...
+         Authors: Smith & Johnson
+         DOI: https://doi.org/10.1016/j.cej.2020
+         Source: Crossref | Properties: Det Pressure
+```
+
+This provides full traceability of literature-derived property values.
 
 ---
 
@@ -881,6 +923,8 @@ classDiagram
 | **Configuration** | Dataclasses | Python dataclasses | Type-safe config management |
 | **Serialization** | JSON/CSV | Pandas + JSON | Results export |
 
+**Note:** RDKit warnings (valence errors, aromaticity issues) are suppressed at entry points (`main.py`, `gui/app.py`) using `RDLogger.DisableLog('rdApp.*')` to keep CLI/GUI output clean.
+
 ---
 
 ## 13. File Structure
@@ -1067,4 +1111,4 @@ For academic publication, create a **three-panel figure**:
 
 ---
 
-*Document Version: 2.0 | Last Updated: January 2026*
+*Document Version: 2.1 | Last Updated: January 2026*

@@ -10,7 +10,7 @@ from modules.prediction import PropertyPredictor
 from modules.feasibility import calculate_feasibility
 from modules.scoring import calculate_total_score
 from modules.strategy_pool import StrategyPoolModifier, default_modification_strategy
-from modules.rag_retrieval import RAGPropertyRetriever, get_properties_with_rag
+from modules.rag_retrieval import RAGPropertyRetriever, get_properties_with_rag, PaperCitation
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -223,16 +223,18 @@ class ChemistAgent:
             smiles = Chem.MolToSmiles(mol)
             
             # Get properties using RAG + ML fallback
-            properties, sources = self._get_properties_with_rag_fallback(smiles)
+            properties, sources, citations = self._get_properties_with_rag_fallback(smiles)
             
             if properties is None or not properties:
                 logger.debug(f"Failed to get properties for {smiles}")
                 return None
             
-            # Log property sources
+            # Log property sources and citations
             rag_count = sum(1 for s in sources.values() if 'literature' in s.lower())
             if rag_count > 0:
                 logger.info(f"RAG retrieved {rag_count}/4 properties from literature for {smiles[:30]}...")
+                # Display citations in CLI
+                self._display_citations(citations, smiles)
             
             # Calculate feasibility (normalized SAScore)
             feasibility_score, is_feasible = calculate_feasibility(smiles)
@@ -272,7 +274,7 @@ class ChemistAgent:
             logger.error(f"Error evaluating candidate {smiles}: {e}")
             return None
     
-    def _get_properties_with_rag_fallback(self, smiles: str) -> Tuple[Optional[Dict[str, float]], Dict[str, str]]:
+    def _get_properties_with_rag_fallback(self, smiles: str) -> Tuple[Optional[Dict[str, float]], Dict[str, str], List[PaperCitation]]:
         """
         Get properties using RAG retrieval first, then ML prediction for missing values.
         
@@ -280,10 +282,11 @@ class ChemistAgent:
             smiles: SMILES string
             
         Returns:
-            Tuple of (properties dict, sources dict)
+            Tuple of (properties dict, sources dict, citations list)
         """
         properties = {}
         sources = {}
+        citations = []
         
         required_props = ['Density', 'Det Velocity', 'Det Pressure', 'Hf solid']
         
@@ -296,6 +299,9 @@ class ChemistAgent:
                     if prop_value is not None:
                         properties[prop_name] = prop_value.value
                         sources[prop_name] = f"literature ({prop_value.source[:30]}...)" if len(prop_value.source) > 30 else f"literature ({prop_value.source})"
+                
+                # Collect citations
+                citations = rag_result.citations or []
                         
             except Exception as e:
                 logger.warning(f"RAG retrieval failed for {smiles[:30]}...: {e}")
@@ -317,6 +323,39 @@ class ChemistAgent:
         
         # Verify we have all required properties
         if not all(p in properties for p in required_props):
-            return None, {}
+            return None, {}, []
         
-        return properties, sources
+        return properties, sources, citations
+    
+    def _display_citations(self, citations: List[PaperCitation], smiles: str):
+        """
+        Display RAG citations in CLI output.
+        
+        Args:
+            citations: List of paper citations that provided property data
+            smiles: SMILES string of the molecule
+        """
+        if not citations:
+            return
+        
+        print(f"\n  📚 RAG Literature References for {smiles[:40]}{'...' if len(smiles) > 40 else ''}:")
+        for i, citation in enumerate(citations, 1):
+            # Format authors (first author et al. if more than 2)
+            if len(citation.authors) == 0:
+                author_str = "Unknown authors"
+            elif len(citation.authors) == 1:
+                author_str = citation.authors[0]
+            elif len(citation.authors) == 2:
+                author_str = f"{citation.authors[0]} & {citation.authors[1]}"
+            else:
+                author_str = f"{citation.authors[0]} et al."
+            
+            # Format properties found
+            props_str = ", ".join(citation.properties_found) if citation.properties_found else "N/A"
+            
+            # Print citation
+            print(f"     [{i}] {citation.title[:70]}{'...' if len(citation.title) > 70 else ''}")
+            print(f"         Authors: {author_str}")
+            if citation.doi:
+                print(f"         DOI: https://doi.org/{citation.doi}")
+            print(f"         Source: {citation.source_db} | Properties: {props_str}")

@@ -5,6 +5,11 @@ Main entry point for the Beam Search Molecular Design System.
 import argparse
 import os
 from dotenv import load_dotenv
+
+# Suppress RDKit warnings (must be done before importing other modules that use RDKit)
+from rdkit import RDLogger
+RDLogger.DisableLog('rdApp.*')
+
 from data_structures import PropertyTarget
 from config import Config
 from designer import EnergeticDesigner

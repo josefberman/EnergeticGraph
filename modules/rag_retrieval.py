@@ -32,6 +32,16 @@ class RetrievedProperty:
 
 
 @dataclass
+class PaperCitation:
+    """Citation information for a paper that provided property data."""
+    title: str
+    authors: List[str]
+    doi: str
+    source_db: str  # OpenAlex, Crossref, SemanticScholar
+    properties_found: List[str]  # Which properties were extracted from this paper
+
+
+@dataclass
 class RAGResult:
     """Result of RAG property lookup."""
     smiles: str
@@ -39,6 +49,11 @@ class RAGResult:
     properties: Dict[str, Optional[RetrievedProperty]]  # Property name -> RetrievedProperty or None
     papers_searched: int
     papers_with_hits: int
+    citations: List[PaperCitation] = None  # Papers that provided property data
+    
+    def __post_init__(self):
+        if self.citations is None:
+            self.citations = []
 
 
 class SMILESToNameConverter:
@@ -730,6 +745,7 @@ class RAGPropertyRetriever:
         
         papers_searched = len(papers)
         papers_with_hits = 0
+        citations = []
         
         # Step 3: Extract properties from each paper
         for paper in papers:
@@ -740,6 +756,9 @@ class RAGPropertyRetriever:
                 continue
             
             extracted = self.extractor.extract_from_abstract(abstract, chemical_name)
+            
+            # Track which properties this paper contributed
+            props_from_this_paper = []
             
             # Merge extracted properties (keep highest confidence)
             found_any = False
@@ -755,16 +774,27 @@ class RAGPropertyRetriever:
                             confidence=prop_value.confidence
                         )
                         properties[prop_name] = prop_value
+                        props_from_this_paper.append(prop_name)
             
             if found_any:
                 papers_with_hits += 1
+                # Create citation for this paper
+                citation = PaperCitation(
+                    title=title,
+                    authors=paper.get('authors', []),
+                    doi=paper.get('doi', ''),
+                    source_db=paper.get('source', 'Unknown'),
+                    properties_found=props_from_this_paper
+                )
+                citations.append(citation)
         
         result = RAGResult(
             smiles=smiles,
             chemical_name=chemical_name,
             properties=properties,
             papers_searched=papers_searched,
-            papers_with_hits=papers_with_hits
+            papers_with_hits=papers_with_hits,
+            citations=citations
         )
         
         # Log summary
