@@ -52,13 +52,19 @@ class EnergeticDesigner:
         logger.info(f"Target properties: {self.target}")
         
         # Load dataset
+        print(f"   📂 Loading dataset from: {self.config.system.dataset_path}")
         self.dataset = load_dataset(self.config.system.dataset_path)
+        print(f"      ✓ Loaded {len(self.dataset)} molecules")
         
         # Find best seed molecule (uses MAPE distance)
+        print(f"\n   🔍 Finding best seed molecule...")
         self.seed = find_closest_match(
             self.dataset,
             self.target
         )
+        
+        print(f"      ✓ Selected seed: {self.seed.smiles[:50]}{'...' if len(self.seed.smiles) > 50 else ''}")
+        print(f"      ✓ Seed score: {self.seed.score:.4f}")
         
         logger.info(f"Initialization complete. Seed: {self.seed.smiles}")
     

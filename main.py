@@ -18,8 +18,25 @@ from designer import EnergeticDesigner
 load_dotenv()
 
 
+def print_banner():
+    """Print a nice startup banner."""
+    banner = """
+╔══════════════════════════════════════════════════════════════════╗
+║                                                                  ║
+║   ⚗️  ENERGETIC MOLECULAR DESIGN SYSTEM (EMDS)  ⚗️              ║
+║                                                                  ║
+║   AI-Powered Discovery of Novel Energetic Materials              ║
+║   Using Beam Search + RAG Literature Retrieval                   ║
+║                                                                  ║
+╚══════════════════════════════════════════════════════════════════╝
+"""
+    print(banner)
+
+
 def main():
     """Main entry point."""
+    print_banner()
+    
     parser = argparse.ArgumentParser(
         description='Beam Search Molecular Design System for Energetic Materials'
     )
@@ -93,37 +110,61 @@ def main():
     designer = EnergeticDesigner(target, config)
     
     # Initialize
-    print("Initializing system...")
+    print("\n🔧 INITIALIZATION")
+    print("─" * 50)
     designer.initialize()
     
-    # Run design loop
-    print("\nRunning beam search optimization...")
-    print(f"Target: {target}")
-    print(f"RAG enabled: {config.rag.enable_rag}")
-    print(f"Beam width: {config.beam_search.beam_width}")
-    print(f"Top K: {config.beam_search.top_k}")
-    print(f"Max iterations: {config.beam_search.max_iterations}")
+    # Show configuration
+    print("\n📋 CONFIGURATION")
+    print("─" * 50)
+    print(f"   🎯 Target Properties:")
+    print(f"      • Density:          {target.density:.2f} g/cm³")
+    print(f"      • Det. Velocity:    {target.det_velocity:.0f} m/s")
+    print(f"      • Det. Pressure:    {target.det_pressure:.1f} GPa")
+    print(f"      • Heat of Form.:    {target.hf_solid:.1f} kJ/mol")
     print()
+    print(f"   ⚙️  Search Parameters:")
+    print(f"      • Beam Width:       {config.beam_search.beam_width}")
+    print(f"      • Top K:            {config.beam_search.top_k}")
+    print(f"      • Max Iterations:   {config.beam_search.max_iterations}")
+    print(f"      • RAG Enabled:      {'✅ Yes' if config.rag.enable_rag else '❌ No'}")
+    
+    # Run design loop
+    print("\n\n🚀 STARTING BEAM SEARCH OPTIMIZATION")
+    print("═" * 50)
     
     best_molecule = designer.run_design_loop()
     
     # Display results
-    print("\n" + "="*60)
-    print("RESULTS")
-    print("="*60)
-    print(f"Best SMILES: {best_molecule.smiles}")
-    print(f"Score: {best_molecule.score:.4f}")
-    print(f"Feasibility: {best_molecule.feasibility:.2f}")
-    print(f"Properties:")
+    print("\n")
+    print("╔" + "═" * 58 + "╗")
+    print("║" + " " * 20 + "🏆 FINAL RESULTS 🏆" + " " * 19 + "║")
+    print("╚" + "═" * 58 + "╝")
+    print()
+    print(f"   🧪 Best Molecule Found:")
+    print(f"      SMILES: {best_molecule.smiles}")
+    print()
+    print(f"   📊 Performance Metrics:")
+    print(f"      • Combined Score:   {best_molecule.score:.4f} (lower is better)")
+    print(f"      • Feasibility:      {(1 - best_molecule.feasibility) * 100:.1f}% synthesizable")
+    print()
+    print(f"   🎯 Properties vs Targets:")
+    print("      ┌─────────────────┬──────────┬──────────┬──────────┐")
+    print("      │ Property        │ Achieved │ Target   │ Error    │")
+    print("      ├─────────────────┼──────────┼──────────┼──────────┤")
     for prop, value in best_molecule.properties.items():
         target_val = target.to_dict()[prop]
-        print(f"  {prop}: {value:.2f} (target: {target_val:.2f})")
-    print("="*60)
+        error_pct = abs(value - target_val) / abs(target_val) * 100 if target_val != 0 else 0
+        print(f"      │ {prop:<15} │ {value:>8.2f} │ {target_val:>8.2f} │ {error_pct:>7.1f}% │")
+    print("      └─────────────────┴──────────┴──────────┴──────────┘")
+    print()
     
     # Save results
-    print(f"\nSaving results to {args.output}...")
+    print(f"   💾 Saving results to: {args.output}")
     designer.save_results(args.output)
-    print("Done!")
+    print()
+    print("   ✅ Done! Thank you for using EMDS.")
+    print()
 
 
 if __name__ == '__main__':

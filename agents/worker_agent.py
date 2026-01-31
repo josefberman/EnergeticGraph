@@ -337,11 +337,11 @@ class ChemistAgent:
         if not citations:
             return
         
-        print(f"\n  📚 RAG Literature References for {smiles[:40]}{'...' if len(smiles) > 40 else ''}:")
+        print(f"\n            📚 Literature References:")
         for i, citation in enumerate(citations, 1):
             # Format authors (first author et al. if more than 2)
             if len(citation.authors) == 0:
-                author_str = "Unknown authors"
+                author_str = "Unknown"
             elif len(citation.authors) == 1:
                 author_str = citation.authors[0]
             elif len(citation.authors) == 2:
@@ -352,9 +352,9 @@ class ChemistAgent:
             # Format properties found
             props_str = ", ".join(citation.properties_found) if citation.properties_found else "N/A"
             
-            # Print citation
-            print(f"     [{i}] {citation.title[:70]}{'...' if len(citation.title) > 70 else ''}")
-            print(f"         Authors: {author_str}")
-            if citation.doi:
-                print(f"         DOI: https://doi.org/{citation.doi}")
-            print(f"         Source: {citation.source_db} | Properties: {props_str}")
+            # Print citation in compact format
+            title_short = citation.title[:55] + "..." if len(citation.title) > 55 else citation.title
+            print(f"               [{i}] \"{title_short}\"")
+            print(f"                   {author_str} | {citation.source_db}")
+            if citation.properties_found:
+                print(f"                   → Properties: {props_str}")

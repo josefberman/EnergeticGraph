@@ -71,7 +71,7 @@ class SystemConfig:
     models_directory: str = "./models"  # Path to XGBoost models
     dataset_path: str = "./sample_start_molecules.csv"  # Path to molecular dataset
     output_directory: str = "./output"  # Output results
-    log_level: str = "INFO"  # Logging level
+    log_level: str = "WARNING"  # Logging level (WARNING = clean output, INFO/DEBUG = verbose)
     random_seed: int = 42  # For reproducibility
 
 

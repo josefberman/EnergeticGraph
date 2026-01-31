@@ -57,10 +57,11 @@ class RAGResult:
 
 class SMILESToNameConverter:
     """
-    Converts SMILES strings to chemical names using PubChemPy.
+    Converts SMILES strings to chemical names.
     
-    Queries the PubChem database via pubchempy to retrieve common names or IUPAC names.
-    Returns None if no name is found (molecule not in PubChem database).
+    Priority:
+    1. PubChemPy - queries PubChem database for known compounds (common/IUPAC names)
+    2. SMILES2IUPAC - neural network model for generating IUPAC names (novel molecules)
     """
     
     def __init__(self, timeout: int = 10):
@@ -72,6 +73,8 @@ class SMILESToNameConverter:
         """
         self.timeout = timeout
         self._pubchempy_available = False
+        self._smiles2iupac_available = False
+        self._iupac_converter = None
         
         # Check if pubchempy is available
         try:
@@ -82,16 +85,33 @@ class SMILESToNameConverter:
         except ImportError:
             logger.warning("pubchempy not installed. Install with: pip install pubchempy")
             self._pubchempy_available = False
+        
+        # Check if chemical-converters (SMILES2IUPAC) is available
+        try:
+            from chemicalconverters import NamesConverter
+            self._iupac_converter = NamesConverter(model_name="knowledgator/SMILES2IUPAC-canonical-base")
+            self._smiles2iupac_available = True
+            logger.info("SMILES2IUPAC model available for IUPAC name generation")
+        except ImportError:
+            logger.warning("chemical-converters not installed. Install with: pip install chemical-converters")
+            self._smiles2iupac_available = False
+        except Exception as e:
+            logger.warning(f"Failed to load SMILES2IUPAC model: {e}")
+            self._smiles2iupac_available = False
     
     def convert(self, smiles: str) -> Optional[str]:
         """
-        Convert SMILES to chemical name using PubChem.
+        Convert SMILES to chemical name.
+        
+        Priority:
+        1. Try PubChem (for known compounds - gets common names)
+        2. Fall back to SMILES2IUPAC model (generates IUPAC for any molecule)
         
         Args:
             smiles: SMILES string
             
         Returns:
-            Chemical name (common or IUPAC) or None if not found in PubChem
+            Chemical name (common or IUPAC) or None if conversion fails
         """
         # Canonicalize SMILES
         mol = Chem.MolFromSmiles(smiles)
@@ -99,12 +119,48 @@ class SMILESToNameConverter:
             return None
         canonical_smiles = Chem.MolToSmiles(mol)
         
-        # Query PubChemPy
-        if not self._pubchempy_available:
-            logger.warning("PubChemPy not available - cannot convert SMILES to name")
-            return None
+        # 1. Try PubChemPy first (for known compounds)
+        if self._pubchempy_available:
+            name = self._query_pubchempy(canonical_smiles)
+            if name:
+                return name
         
-        return self._query_pubchempy(canonical_smiles)
+        # 2. Fall back to SMILES2IUPAC neural network model
+        if self._smiles2iupac_available:
+            name = self._generate_iupac_smiles2iupac(canonical_smiles)
+            if name:
+                return name
+        
+        return None
+    
+    def _generate_iupac_smiles2iupac(self, smiles: str) -> Optional[str]:
+        """
+        Generate IUPAC name using the SMILES2IUPAC neural network model.
+        
+        Uses the knowledgator/SMILES2IUPAC-canonical-base model from HuggingFace.
+        Model has 86.9% accuracy on IUPAC name generation.
+        
+        Args:
+            smiles: SMILES string
+            
+        Returns:
+            IUPAC name or None if generation fails
+        """
+        try:
+            # Use BASE style for most common/recognizable name
+            result = self._iupac_converter.smiles_to_iupac(f"<BASE>{smiles}")
+            
+            if result and len(result) > 0:
+                iupac_name = result[0]
+                # Validate that we got a real name (not empty or same as input)
+                if iupac_name and iupac_name != smiles and len(iupac_name) > 0:
+                    return iupac_name
+            
+            return None
+            
+        except Exception as e:
+            logger.debug(f"SMILES2IUPAC generation failed for {smiles[:30]}...: {e}")
+            return None
     
     def _query_pubchempy(self, smiles: str) -> Optional[str]:
         """
@@ -624,6 +680,35 @@ class RAGPropertyRetriever:
         
         self.use_llm = use_llm
     
+    def _get_chemical_name(self, smiles: str) -> Tuple[Optional[str], str]:
+        """
+        Get chemical name with source tracking.
+        
+        Args:
+            smiles: SMILES string
+            
+        Returns:
+            Tuple of (chemical_name, source) where source is "PubChem" or "SMILES2IUPAC"
+        """
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return None, ""
+        canonical_smiles = Chem.MolToSmiles(mol)
+        
+        # 1. Try PubChemPy first (for known compounds)
+        if self.name_converter._pubchempy_available:
+            name = self.name_converter._query_pubchempy(canonical_smiles)
+            if name:
+                return name, "PubChem"
+        
+        # 2. Fall back to SMILES2IUPAC neural network model
+        if self.name_converter._smiles2iupac_available:
+            name = self.name_converter._generate_iupac_smiles2iupac(canonical_smiles)
+            if name:
+                return name, "SMILES2IUPAC"
+        
+        return None, ""
+    
     def retrieve_properties(self, smiles: str) -> RAGResult:
         """
         Retrieve properties for a molecule from literature.
@@ -644,10 +729,11 @@ class RAGPropertyRetriever:
         
         # Step 1: Convert SMILES to name
         logger.info(f"Converting SMILES to name: {smiles[:50]}...")
-        chemical_name = self.name_converter.convert(smiles)
+        chemical_name, name_source = self._get_chemical_name(smiles)
         
         if not chemical_name:
-            logger.warning(f"Could not convert SMILES to name: {smiles[:30]}...")
+            # Could not get name from either source
+            logger.debug(f"Could not generate name for: {smiles[:30]}...")
             return RAGResult(
                 smiles=smiles,
                 chemical_name=None,
@@ -656,10 +742,16 @@ class RAGPropertyRetriever:
                 papers_with_hits=0
             )
         
-        logger.info(f"Chemical name: {chemical_name}")
+        # Show where the name came from
+        logger.info(f"Chemical name: {chemical_name} (via {name_source})")
+        if name_source == "PubChem":
+            print(f"         📚 Known compound: '{chemical_name}'")
+        else:
+            print(f"         🧪 Novel compound (IUPAC): '{chemical_name}'")
         
         # Step 2: Search literature
         logger.info(f"Searching literature databases for: {chemical_name}")
+        print(f"         📖 Searching literature...", end=" ", flush=True)
         papers = self.searcher.search(chemical_name, smiles)
         
         papers_searched = len(papers)
@@ -719,6 +811,13 @@ class RAGPropertyRetriever:
         # Log summary
         found_props = [k for k, v in properties.items() if v is not None]
         logger.info(f"RAG found {len(found_props)}/4 properties: {found_props}")
+        
+        # Print summary to CLI (only when we searched - i.e., had a chemical name)
+        if found_props:
+            print(f"found {len(found_props)} properties!")
+            print(f"            ✅ Literature values: {', '.join(found_props)}")
+        else:
+            print(f"no property values found")
         
         return result
 
