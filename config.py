@@ -31,9 +31,9 @@ class ScoringConfig:
         'Hf solid': 0.25
     })
     
-    # Multi-objective weights
+    # Multi-objective weights for combined score: mape_weight * MAPE + sascore_weight * SAScore
     mape_weight: float = 0.7  # Weight for property accuracy (MAPE)
-    feasibility_weight: float = 0.3  # Weight for synthetic feasibility
+    sascore_weight: float = 0.3  # Weight for normalized SAScore (0=feasible, 1=infeasible)
 
 
 @dataclass
@@ -45,8 +45,8 @@ class StrategyPoolConfig:
     # Enable supplementary diverse modifications
     enable_diverse_supplement: bool = True
     
-    # Minimum feasibility threshold for candidates
-    min_feasibility: float = 0.5
+    # Maximum normalized SAScore threshold for candidates (0.67 ≈ SAScore 7)
+    max_sascore: float = 0.67
 
 
 @dataclass

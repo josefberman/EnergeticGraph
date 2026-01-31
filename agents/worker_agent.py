@@ -221,9 +221,9 @@ class ChemistAgent:
             score = calculate_total_score(
                 predicted_props,
                 target_dict,
-                feasibility_score,
+                feasibility_score,  # This is now normalized SAScore (0=feasible, 1=infeasible)
                 mape_weight=self.config.scoring.mape_weight,
-                feasibility_weight=self.config.scoring.feasibility_weight,
+                sascore_weight=self.config.scoring.sascore_weight,
                 property_weights=self.config.scoring.property_weights
             )
             
