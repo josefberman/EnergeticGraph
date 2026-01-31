@@ -55,9 +55,6 @@ class RAGConfig:
     # Enable RAG property retrieval from literature
     enable_rag: bool = True
     
-    # Use PubChem API for SMILES-to-name conversion
-    use_pubchem: bool = True
-    
     # Use LLM (GPT-4) for property extraction from abstracts
     use_llm: bool = False
     

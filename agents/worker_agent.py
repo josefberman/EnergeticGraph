@@ -43,7 +43,6 @@ class ChemistAgent:
         self.rag_retriever = None
         if config.rag.enable_rag:
             self.rag_retriever = RAGPropertyRetriever(
-                use_pubchem=config.rag.use_pubchem,
                 use_llm=config.rag.use_llm,
                 max_papers=config.rag.max_papers,
                 timeout=config.rag.timeout
