@@ -516,12 +516,9 @@ flowchart TB
     end
     
     subgraph NameConversion["Step 1: SMILES → Name"]
-        SMILES --> CommonDB[Common Names DB]
-        CommonDB -->|Not Found| PubChem[PubChem API]
-        PubChem -->|Not Found| Systematic[Generate Systematic]
-        CommonDB -->|Found| Name1[Chemical Name]
-        PubChem -->|Found| Name1
-        Systematic --> Name1
+        SMILES --> PubChem[PubChem API<br/>via pubchempy]
+        PubChem -->|Found| Name1[Chemical Name]
+        PubChem -->|Not Found| Skip[Skip RAG<br/>ML Only]
     end
     
     subgraph Search["Step 2: Literature Search"]
@@ -562,13 +559,13 @@ flowchart TB
 
 ### 7.2 SMILES-to-Name Conversion
 
-The system converts SMILES to chemical names using multiple sources:
+The system converts SMILES to chemical names using **PubChemPy** exclusively:
 
-| Priority | Source | Description |
-|----------|--------|-------------|
-| 1 | Common Names DB | Pre-loaded database of common energetic materials (TNT, RDX, HMX, etc.) |
-| 2 | PubChemPy | Python package for PubChem API - retrieves IUPAC and common names |
-| 3 | Systematic | Generated descriptive name from molecular features (fallback) |
+| Source | Description |
+|--------|-------------|
+| PubChemPy | Python package for PubChem API - retrieves common names or IUPAC names |
+
+If a molecule is not found in PubChem, `None` is returned and the RAG search is skipped for that molecule (falling back to ML prediction only).
 
 **PubChemPy Usage:**
 ```python
@@ -585,13 +582,9 @@ iupac = compounds[0].iupac_name   # IUPAC name
 ```mermaid
 classDiagram
     class SMILESToNameConverter {
-        +Dict COMMON_NAMES
-        +bool use_pubchem
         +int timeout
         +convert(smiles) str
-        -_lookup_common_name(smiles) str
-        -_query_pubchem(smiles) str
-        -_generate_systematic_name(mol) str
+        -_query_pubchempy(smiles) str
     }
     
     class PaperCitation {
@@ -652,11 +645,12 @@ Properties are extracted using regex patterns with unit conversion:
 @dataclass
 class RAGConfig:
     enable_rag: bool = True           # Enable RAG retrieval
-    use_pubchem: bool = True          # Use PubChem for name lookup
     use_llm: bool = False             # Use LLM for extraction (requires API key)
     max_papers: int = 10              # Max papers to search
     timeout: int = 15                 # API timeout (seconds)
 ```
+
+**Note:** SMILES-to-name conversion always uses PubChemPy. If a molecule is not found in PubChem, RAG is skipped and the system falls back to ML prediction.
 
 ### 7.6 Property Source Tracking
 
@@ -880,7 +874,6 @@ classDiagram
     
     class RAGConfig {
         bool enable_rag = True
-        bool use_pubchem = True
         bool use_llm = False
         int max_papers = 10
         int timeout = 15

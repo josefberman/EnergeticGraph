@@ -18,7 +18,6 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
 from rdkit import Chem
-from rdkit.Chem import Descriptors
 
 logger = logging.getLogger(__name__)
 
@@ -58,70 +57,41 @@ class RAGResult:
 
 class SMILESToNameConverter:
     """
-    Converts SMILES strings to chemical names using multiple sources.
+    Converts SMILES strings to chemical names using PubChemPy.
     
-    Priority:
-    1. Common name database lookup (fast, local)
-    2. PubChemPy (comprehensive, uses PubChem API)
-    3. RDKit systematic name generation (fallback)
+    Queries the PubChem database via pubchempy to retrieve common names or IUPAC names.
+    Returns None if no name is found (molecule not in PubChem database).
     """
     
-    # Common energetic materials name database
-    COMMON_NAMES = {
-        # Nitroaromatics
-        "Cc1ccc(cc1[N+](=O)[O-])[N+](=O)[O-]": "TNT (2,4,6-Trinitrotoluene)",
-        "c1cc(cc(c1[N+](=O)[O-])[N+](=O)[O-])[N+](=O)[O-]": "TNB (1,3,5-Trinitrobenzene)",
-        "Cc1c(cc(cc1[N+](=O)[O-])[N+](=O)[O-])[N+](=O)[O-]": "TNT",
-        
-        # RDX/HMX family
-        "C1N(CN(CN1[N+](=O)[O-])[N+](=O)[O-])[N+](=O)[O-]": "RDX (Cyclotrimethylenetrinitramine)",
-        "C1N(CN(CN(CN1[N+](=O)[O-])[N+](=O)[O-])[N+](=O)[O-])[N+](=O)[O-]": "HMX (Cyclotetramethylenetetranitramine)",
-        
-        # TATB
-        "Nc1c([N+](=O)[O-])c(N)c([N+](=O)[O-])c(N)c1[N+](=O)[O-]": "TATB (Triaminotrinitrobenzene)",
-        
-        # CL-20
-        "C12N(C3N(C(N1[N+](=O)[O-])N(C(N2[N+](=O)[O-])N3[N+](=O)[O-])[N+](=O)[O-])[N+](=O)[O-])[N+](=O)[O-]": "CL-20 (Hexanitrohexaazaisowurtzitane)",
-        
-        # PETN
-        "C(C(CO[N+](=O)[O-])(CO[N+](=O)[O-])CO[N+](=O)[O-])O[N+](=O)[O-]": "PETN (Pentaerythritol tetranitrate)",
-        
-        # Nitroglycerine
-        "C(C(CO[N+](=O)[O-])O[N+](=O)[O-])O[N+](=O)[O-]": "Nitroglycerin",
-    }
-    
-    def __init__(self, use_pubchem: bool = True, timeout: int = 10):
+    def __init__(self, timeout: int = 10):
         """
         Initialize converter.
         
         Args:
-            use_pubchem: Whether to use PubChemPy for name lookup
             timeout: API timeout in seconds (not used by pubchempy directly)
         """
-        self.use_pubchem = use_pubchem
         self.timeout = timeout
         self._pubchempy_available = False
         
         # Check if pubchempy is available
-        if use_pubchem:
-            try:
-                import pubchempy as pcp
-                self._pcp = pcp
-                self._pubchempy_available = True
-                logger.info("PubChemPy available for SMILES-to-name conversion")
-            except ImportError:
-                logger.warning("pubchempy not installed. Install with: pip install pubchempy")
-                self._pubchempy_available = False
+        try:
+            import pubchempy as pcp
+            self._pcp = pcp
+            self._pubchempy_available = True
+            logger.info("PubChemPy available for SMILES-to-name conversion")
+        except ImportError:
+            logger.warning("pubchempy not installed. Install with: pip install pubchempy")
+            self._pubchempy_available = False
     
     def convert(self, smiles: str) -> Optional[str]:
         """
-        Convert SMILES to chemical name.
+        Convert SMILES to chemical name using PubChem.
         
         Args:
             smiles: SMILES string
             
         Returns:
-            Chemical name (IUPAC or common name) or None if not found
+            Chemical name (common or IUPAC) or None if not found in PubChem
         """
         # Canonicalize SMILES
         mol = Chem.MolFromSmiles(smiles)
@@ -129,30 +99,12 @@ class SMILESToNameConverter:
             return None
         canonical_smiles = Chem.MolToSmiles(mol)
         
-        # 1. Check common names database (fastest)
-        name = self._lookup_common_name(canonical_smiles)
-        if name:
-            logger.debug(f"Found in common names DB: {name}")
-            return name
+        # Query PubChemPy
+        if not self._pubchempy_available:
+            logger.warning("PubChemPy not available - cannot convert SMILES to name")
+            return None
         
-        # 2. Try PubChemPy
-        if self.use_pubchem and self._pubchempy_available:
-            name = self._query_pubchempy(canonical_smiles)
-            if name:
-                logger.debug(f"Found via PubChemPy: {name}")
-                return name
-        
-        # 3. Generate systematic name from structure (fallback)
-        name = self._generate_systematic_name(mol)
-        if name:
-            logger.debug(f"Generated systematic name: {name}")
-            return name
-        
-        return None
-    
-    def _lookup_common_name(self, canonical_smiles: str) -> Optional[str]:
-        """Look up common name from database."""
-        return self.COMMON_NAMES.get(canonical_smiles)
+        return self._query_pubchempy(canonical_smiles)
     
     def _query_pubchempy(self, smiles: str) -> Optional[str]:
         """
@@ -213,36 +165,6 @@ class SMILESToNameConverter:
             
         except Exception as e:
             logger.warning(f"PubChemPy error for {smiles[:30]}...: {e}")
-            return None
-    
-    def _generate_systematic_name(self, mol: Chem.Mol) -> Optional[str]:
-        """Generate a descriptive name from molecular structure."""
-        try:
-            # Create a descriptive name based on molecular features
-            formula = Chem.rdMolDescriptors.CalcMolFormula(mol)
-            mw = Descriptors.MolWt(mol)
-            
-            # Count key functional groups
-            nitro_count = len(mol.GetSubstructMatches(Chem.MolFromSmarts('[N+](=O)[O-]')))
-            amino_count = len(mol.GetSubstructMatches(Chem.MolFromSmarts('[NH2]')))
-            azide_count = len(mol.GetSubstructMatches(Chem.MolFromSmarts('[N-]=[N+]=[N-]')))
-            ring_count = Descriptors.RingCount(mol)
-            
-            parts = []
-            if nitro_count > 0:
-                parts.append(f"{nitro_count}-nitro")
-            if amino_count > 0:
-                parts.append(f"{amino_count}-amino")
-            if azide_count > 0:
-                parts.append(f"{azide_count}-azido")
-            if ring_count > 0:
-                parts.append(f"{ring_count}-ring")
-            
-            parts.append(f"compound ({formula}, MW={mw:.1f})")
-            
-            return " ".join(parts) if parts else formula
-            
-        except Exception:
             return None
 
 
@@ -685,7 +607,6 @@ class RAGPropertyRetriever:
     """
     
     def __init__(self, 
-                 use_pubchem: bool = True,
                  use_llm: bool = False,
                  max_papers: int = 10,
                  timeout: int = 15):
@@ -693,16 +614,14 @@ class RAGPropertyRetriever:
         Initialize RAG retriever.
         
         Args:
-            use_pubchem: Whether to use PubChem for name lookup
             use_llm: Whether to use LLM for property extraction
             max_papers: Maximum papers to search
             timeout: API timeout in seconds
         """
-        self.name_converter = SMILESToNameConverter(use_pubchem=use_pubchem, timeout=timeout)
+        self.name_converter = SMILESToNameConverter(timeout=timeout)
         self.searcher = LiteratureSearcher(max_results=max_papers, timeout=timeout)
         self.extractor = PropertyExtractor(use_llm=use_llm)
         
-        self.use_pubchem = use_pubchem
         self.use_llm = use_llm
     
     def retrieve_properties(self, smiles: str) -> RAGResult:
@@ -807,7 +726,6 @@ class RAGPropertyRetriever:
 def get_properties_with_rag(smiles: str, 
                             predictor,
                             use_rag: bool = True,
-                            use_pubchem: bool = True,
                             use_llm: bool = False) -> Tuple[Dict[str, float], Dict[str, str]]:
     """
     Get properties for a molecule, using RAG first then ML prediction for missing values.
@@ -816,7 +734,6 @@ def get_properties_with_rag(smiles: str,
         smiles: SMILES string
         predictor: PropertyPredictor instance for ML fallback
         use_rag: Whether to use RAG retrieval
-        use_pubchem: Whether to use PubChem for name lookup
         use_llm: Whether to use LLM for extraction
         
     Returns:
@@ -830,7 +747,6 @@ def get_properties_with_rag(smiles: str,
     if use_rag:
         # Try RAG retrieval first
         rag = RAGPropertyRetriever(
-            use_pubchem=use_pubchem,
             use_llm=use_llm
         )
         
