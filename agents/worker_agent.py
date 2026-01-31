@@ -3,13 +3,14 @@ Worker Agent (ChemistAgent) - Generates molecular variations.
 """
 
 import logging
-from typing import List, Dict
+from typing import List, Dict, Optional, Tuple
 from rdkit import Chem
 from data_structures import MoleculeState, PropertyTarget
 from modules.prediction import PropertyPredictor
 from modules.feasibility import calculate_feasibility
 from modules.scoring import calculate_total_score
 from modules.strategy_pool import StrategyPoolModifier, default_modification_strategy
+from modules.rag_retrieval import RAGPropertyRetriever, get_properties_with_rag
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,17 @@ class ChemistAgent:
         
         # Initialize components
         self.predictor = PropertyPredictor(config.system.models_directory)
+        
+        # Initialize RAG retriever if enabled
+        self.rag_retriever = None
+        if config.rag.enable_rag:
+            self.rag_retriever = RAGPropertyRetriever(
+                use_pubchem=config.rag.use_pubchem,
+                use_llm=config.rag.use_llm,
+                max_papers=config.rag.max_papers,
+                timeout=config.rag.timeout
+            )
+            logger.info("Initialized ChemistAgent with RAG property retrieval")
         
         # Initialize strategy pool modifier
         self.strategy_modifier = StrategyPoolModifier(config)
@@ -187,6 +199,9 @@ class ChemistAgent:
         """
         Evaluate a candidate molecule.
         
+        Uses RAG to search for known property values in literature first,
+        then falls back to ML prediction for any missing properties.
+        
         Args:
             smiles: Candidate SMILES string
         
@@ -207,34 +222,45 @@ class ChemistAgent:
             # Canonicalize
             smiles = Chem.MolToSmiles(mol)
             
-            # Predict properties
-            predicted_props = self.predictor.predict_properties(smiles)
-            if predicted_props is None:
-                logger.debug(f"Failed to predict properties for {smiles}")
+            # Get properties using RAG + ML fallback
+            properties, sources = self._get_properties_with_rag_fallback(smiles)
+            
+            if properties is None or not properties:
+                logger.debug(f"Failed to get properties for {smiles}")
                 return None
             
-            # Calculate feasibility
+            # Log property sources
+            rag_count = sum(1 for s in sources.values() if 'literature' in s.lower())
+            if rag_count > 0:
+                logger.info(f"RAG retrieved {rag_count}/4 properties from literature for {smiles[:30]}...")
+            
+            # Calculate feasibility (normalized SAScore)
             feasibility_score, is_feasible = calculate_feasibility(smiles)
             
             # Calculate total score
             target_dict = self.target.to_dict()
             score = calculate_total_score(
-                predicted_props,
+                properties,
                 target_dict,
-                feasibility_score,  # This is now normalized SAScore (0=feasible, 1=infeasible)
+                feasibility_score,  # Normalized SAScore (0=feasible, 1=infeasible)
                 mape_weight=self.config.scoring.mape_weight,
                 sascore_weight=self.config.scoring.sascore_weight,
                 property_weights=self.config.scoring.property_weights
             )
             
+            # Build provenance string with property sources
+            provenance_parts = [f"{self.parent.provenance} -> modification"]
+            if rag_count > 0:
+                provenance_parts.append(f"[RAG: {rag_count} props]")
+            
             # Create MoleculeState
             candidate = MoleculeState(
                 smiles=smiles,
-                properties=predicted_props,
+                properties=properties,
                 score=score,
                 feasibility=feasibility_score,
                 is_feasible=is_feasible,
-                provenance=f"{self.parent.provenance} -> modification",
+                provenance=" ".join(provenance_parts),
                 generation=self.parent.generation + 1,
                 parent_smiles=self.parent.smiles
             )
@@ -245,3 +271,52 @@ class ChemistAgent:
         except Exception as e:
             logger.error(f"Error evaluating candidate {smiles}: {e}")
             return None
+    
+    def _get_properties_with_rag_fallback(self, smiles: str) -> Tuple[Optional[Dict[str, float]], Dict[str, str]]:
+        """
+        Get properties using RAG retrieval first, then ML prediction for missing values.
+        
+        Args:
+            smiles: SMILES string
+            
+        Returns:
+            Tuple of (properties dict, sources dict)
+        """
+        properties = {}
+        sources = {}
+        
+        required_props = ['Density', 'Det Velocity', 'Det Pressure', 'Hf solid']
+        
+        # Step 1: Try RAG retrieval if enabled
+        if self.rag_retriever is not None:
+            try:
+                rag_result = self.rag_retriever.retrieve_properties(smiles)
+                
+                for prop_name, prop_value in rag_result.properties.items():
+                    if prop_value is not None:
+                        properties[prop_name] = prop_value.value
+                        sources[prop_name] = f"literature ({prop_value.source[:30]}...)" if len(prop_value.source) > 30 else f"literature ({prop_value.source})"
+                        
+            except Exception as e:
+                logger.warning(f"RAG retrieval failed for {smiles[:30]}...: {e}")
+        
+        # Step 2: ML prediction for missing properties
+        missing_props = [p for p in required_props if p not in properties]
+        
+        if missing_props:
+            try:
+                predicted = self.predictor.predict_properties(smiles)
+                
+                if predicted:
+                    for prop_name in missing_props:
+                        if prop_name in predicted and predicted[prop_name] is not None:
+                            properties[prop_name] = predicted[prop_name]
+                            sources[prop_name] = "predicted (XGBoost)"
+            except Exception as e:
+                logger.warning(f"ML prediction failed for {smiles[:30]}...: {e}")
+        
+        # Verify we have all required properties
+        if not all(p in properties for p in required_props):
+            return None, {}
+        
+        return properties, sources
