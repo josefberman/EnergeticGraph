@@ -7,6 +7,7 @@ import os
 import sys
 import json
 import time
+import logging
 from flask import Flask, render_template, request, jsonify, Response
 from dotenv import load_dotenv
 from queue import Queue
@@ -15,6 +16,13 @@ import threading
 # Suppress RDKit warnings (must be done before importing other modules that use RDKit)
 from rdkit import RDLogger
 RDLogger.DisableLog('rdApp.*')
+
+# Suppress verbose logging - only show warnings and errors
+logging.basicConfig(level=logging.WARNING, format='%(message)s')
+
+# Suppress Flask's werkzeug logger
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -335,10 +343,23 @@ def progress_stream():
 
 if __name__ == '__main__':
     # Run app on port 5001 (debug=False to avoid threading issues)
-    print("=" * 60)
-    print("  Molecular Design System - Web GUI")
-    print("=" * 60)
-    print(f"\n  Open in browser: http://localhost:5001\n")
-    print("  Press Ctrl+C to stop the server")
-    print("=" * 60 + "\n")
+    print()
+    print("╔══════════════════════════════════════════════════════════════════╗")
+    print("║                                                                  ║")
+    print("║   ⚗️  ENERGETIC MOLECULAR DESIGN SYSTEM (EMDS)  ⚗️              ║")
+    print("║                                                                  ║")
+    print("║   🌐 Web GUI Server                                              ║")
+    print("║                                                                  ║")
+    print("╚══════════════════════════════════════════════════════════════════╝")
+    print()
+    print("   🚀 Server Status: RUNNING")
+    print()
+    print("   🔗 Open in browser:")
+    print("      http://localhost:5001")
+    print()
+    print("   ⌨️  Press Ctrl+C to stop the server")
+    print()
+    print("─" * 68)
+    print()
+    
     app.run(host='0.0.0.0', debug=False, threaded=True, port=5001)

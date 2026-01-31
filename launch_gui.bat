@@ -1,16 +1,10 @@
 @echo off
-echo ========================================
-echo  Molecular Design System - Web GUI
-echo ========================================
+cls
 echo.
-echo Activating energetic_env conda environment...
-call conda activate energetic_env
+echo    Activating conda environment: energetic_env
+call conda activate energetic_env_py311
 
-echo.
-echo Starting Flask web server...
-echo Navigate to: http://localhost:5000
-echo.
-echo Press Ctrl+C to stop the server
+echo    Starting EMDS Web Server...
 echo.
 
 cd gui

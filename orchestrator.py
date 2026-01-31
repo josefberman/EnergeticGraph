@@ -68,19 +68,29 @@ class BeamSearchEngine:
         current_beam = [seed_molecule]
         self.best_ever = seed_molecule
         
+        # Print seed info
+        print()
+        print(f"   🌱 Seed Molecule: {seed_molecule.smiles[:50]}{'...' if len(seed_molecule.smiles) > 50 else ''}")
+        print(f"      Initial Score: {seed_molecule.score:.4f}")
+        print()
+        
         logger.info(f"Starting beam search with seed: {seed_molecule.smiles}")
-        logger.info(f"Seed score: {seed_molecule.score:.4f}")
         
         for iteration in range(self.beam_config.max_iterations):
-            logger.info(f"\n{'='*60}")
-            logger.info(f"Iteration {iteration + 1}/{self.beam_config.max_iterations}")
-            logger.info(f"{'='*60}")
+            # Print iteration header
+            print()
+            print(f"┌{'─' * 58}┐")
+            print(f"│  📍 ITERATION {iteration + 1}/{self.beam_config.max_iterations}" + " " * (43 - len(str(iteration + 1)) - len(str(self.beam_config.max_iterations))) + "│")
+            print(f"└{'─' * 58}┘")
             
             # Generate candidates from current beam
             all_candidates = []
             
-            for parent_mol in current_beam:
-                logger.info(f"Processing parent: {parent_mol.smiles} (score: {parent_mol.score:.4f})")
+            for idx, parent_mol in enumerate(current_beam):
+                print(f"\n   🔬 Processing Parent {idx + 1}/{len(current_beam)}:")
+                print(f"      SMILES: {parent_mol.smiles[:45]}{'...' if len(parent_mol.smiles) > 45 else ''}")
+                print(f"      Score:  {parent_mol.score:.4f}")
+                print()
                 
                 # Create worker agent for this parent
                 agent = ChemistAgent(parent_mol, self.target, self.config)
@@ -89,21 +99,23 @@ class BeamSearchEngine:
                 new_candidates = agent.generate_variations()
                 all_candidates.extend(new_candidates)
                 
-                logger.info(f"  Generated {len(new_candidates)} new candidates")
+                print(f"\n      ✓ Generated {len(new_candidates)} candidate variations")
             
-            logger.info(f"Total candidates this iteration: {len(all_candidates)}")
+            # Stats
+            print(f"\n   📈 Iteration Statistics:")
+            print(f"      • Total candidates:    {len(all_candidates)}")
             
             # Filter feasible candidates
             feasible_candidates = [m for m in all_candidates if m.is_feasible]
-            logger.info(f"Feasible candidates: {len(feasible_candidates)}")
+            print(f"      • Feasible candidates: {len(feasible_candidates)}")
             
             if not feasible_candidates:
-                logger.warning("No feasible candidates found. Stopping.")
+                print(f"\n   ⚠️  No feasible candidates found. Stopping search.")
                 break
             
             # Remove duplicates (by SMILES)
             unique_candidates = self._remove_duplicates(feasible_candidates)
-            logger.info(f"Unique candidates: {len(unique_candidates)}")
+            print(f"      • Unique candidates:   {len(unique_candidates)}")
             
             # Rank by MAPE (lower is better) instead of combined score
             ranked_candidates = sorted(unique_candidates, key=lambda x: self.calculate_mape(x))
@@ -119,7 +131,9 @@ class BeamSearchEngine:
             best_ever_mape = self.calculate_mape(self.best_ever)
             if best_mape < best_ever_mape:
                 self.best_ever = next_beam[0]
-                logger.info(f"*** NEW BEST: {self.best_ever.smiles} (MAPE: {best_mape:.2f}%) ***")
+                print(f"\n   🌟 NEW BEST FOUND!")
+                print(f"      SMILES: {self.best_ever.smiles[:45]}{'...' if len(self.best_ever.smiles) > 45 else ''}")
+                print(f"      MAPE:   {best_mape:.2f}%")
             
             # Check convergence
             if iteration > 0:
@@ -127,23 +141,24 @@ class BeamSearchEngine:
                 curr_best_score = next_beam[0].score
                 improvement = prev_best_score - curr_best_score
                 
-                logger.info(f"Improvement: {improvement:.6f}")
+                print(f"\n   📉 Score Improvement: {improvement:.6f}")
                 
                 if improvement < self.beam_config.convergence_threshold:
-                    logger.info(f"Converged (improvement < {self.beam_config.convergence_threshold})")
+                    print(f"\n   ✅ Converged! (improvement < {self.beam_config.convergence_threshold})")
                     break
             
             # Update beam
             current_beam = next_beam
             self.history.append(current_beam)
         
-        logger.info(f"\n{'='*60}")
-        logger.info("Beam search complete")
-        logger.info(f"Best molecule: {self.best_ever.smiles}")
-        logger.info(f"Best score: {self.best_ever.score:.4f}")
-        logger.info(f"Properties: {self.best_ever.properties}")
-        logger.info(f"Feasibility: {self.best_ever.feasibility:.2f}")
-        logger.info(f"{'='*60}\n")
+        # Final summary
+        print()
+        print(f"┌{'─' * 58}┐")
+        print(f"│  ✅ BEAM SEARCH COMPLETE" + " " * 33 + "│")
+        print(f"└{'─' * 58}┘")
+        print()
+        
+        logger.info(f"Beam search complete. Best: {self.best_ever.smiles}")
         
         return self.best_ever
     
@@ -167,11 +182,20 @@ class BeamSearchEngine:
             iteration: Iteration number
             beam: Current beam
         """
-        logger.info(f"\nIteration {iteration} Results:")
-        logger.info(f"Beam size: {len(beam)}")
+        print(f"\n   🏅 Top {min(3, len(beam))} Candidates This Iteration:")
+        print()
         
         for i, mol in enumerate(beam[:3]):  # Show top 3
-            logger.info(f"  {i+1}. SMILES: {mol.smiles}")
-            logger.info(f"     Score: {mol.score:.4f}")
-            logger.info(f"     Feasibility: {mol.feasibility:.2f}")
-            logger.info(f"     Properties: {mol.properties}")
+            mape = self.calculate_mape(mol)
+            feasibility_pct = (1 - mol.feasibility) * 100
+            
+            medal = ["🥇", "🥈", "🥉"][i] if i < 3 else f"#{i+1}"
+            
+            print(f"      {medal} Rank {i+1}:")
+            print(f"         SMILES:      {mol.smiles[:40]}{'...' if len(mol.smiles) > 40 else ''}")
+            print(f"         Score:       {mol.score:.4f}")
+            print(f"         MAPE:        {mape:.1f}%")
+            print(f"         Feasibility: {feasibility_pct:.0f}%")
+            print()
+        
+        logger.debug(f"Iteration {iteration}: beam size = {len(beam)}")
