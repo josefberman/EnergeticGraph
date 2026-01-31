@@ -1,11 +1,11 @@
 """
 RAG (Retrieval-Augmented Generation) module for energetic property lookup.
 
-This module searches ChemRXiv papers for known property values before
+This module searches scientific literature for known property values before
 falling back to ML prediction. It:
 1. Converts SMILES to proper chemical names (IUPAC/common)
-2. Searches ChemRXiv for papers mentioning the molecule
-3. Extracts energetic properties from paper abstracts using LLM
+2. Searches multiple databases (OpenAlex, Crossref, Semantic Scholar) for papers
+3. Extracts energetic properties from paper abstracts using regex/LLM
 4. Returns found properties, with None for properties not found
 """
 
@@ -51,9 +51,9 @@ class SMILESToNameConverter:
     Converts SMILES strings to chemical names using multiple sources.
     
     Priority:
-    1. PubChem API (most comprehensive)
-    2. RDKit systematic name generation
-    3. Common name database lookup
+    1. Common name database lookup (fast, local)
+    2. PubChemPy (comprehensive, uses PubChem API)
+    3. RDKit systematic name generation (fallback)
     """
     
     # Common energetic materials name database
@@ -85,11 +85,24 @@ class SMILESToNameConverter:
         Initialize converter.
         
         Args:
-            use_pubchem: Whether to use PubChem API
-            timeout: API timeout in seconds
+            use_pubchem: Whether to use PubChemPy for name lookup
+            timeout: API timeout in seconds (not used by pubchempy directly)
         """
         self.use_pubchem = use_pubchem
         self.timeout = timeout
+        self._pubchempy_available = False
+        
+        # Check if pubchempy is available
+        if use_pubchem:
+            try:
+                import pubchempy as pcp
+                self._pcp = pcp
+                self._pubchempy_available = True
+                logger.info("PubChemPy available for SMILES-to-name conversion")
+            except ImportError:
+                logger.warning("pubchempy not installed. Install with: pip install pubchempy")
+                self._pubchempy_available = False
+        
         self._ensure_cache_dir()
     
     def _ensure_cache_dir(self):
@@ -131,7 +144,7 @@ class SMILESToNameConverter:
             smiles: SMILES string
             
         Returns:
-            Chemical name or None if not found
+            Chemical name (IUPAC or common name) or None if not found
         """
         # Check cache first
         cached_name = self._load_from_cache(smiles)
@@ -145,22 +158,25 @@ class SMILESToNameConverter:
             return None
         canonical_smiles = Chem.MolToSmiles(mol)
         
-        # 1. Check common names database
+        # 1. Check common names database (fastest)
         name = self._lookup_common_name(canonical_smiles)
         if name:
+            logger.debug(f"Found in common names DB: {name}")
             self._save_to_cache(smiles, name)
             return name
         
-        # 2. Try PubChem API
-        if self.use_pubchem:
-            name = self._query_pubchem(canonical_smiles)
+        # 2. Try PubChemPy
+        if self.use_pubchem and self._pubchempy_available:
+            name = self._query_pubchempy(canonical_smiles)
             if name:
+                logger.debug(f"Found via PubChemPy: {name}")
                 self._save_to_cache(smiles, name)
                 return name
         
-        # 3. Generate systematic name from structure
+        # 3. Generate systematic name from structure (fallback)
         name = self._generate_systematic_name(mol)
         if name:
+            logger.debug(f"Generated systematic name: {name}")
             self._save_to_cache(smiles, name)
             return name
         
@@ -170,35 +186,65 @@ class SMILESToNameConverter:
         """Look up common name from database."""
         return self.COMMON_NAMES.get(canonical_smiles)
     
-    def _query_pubchem(self, smiles: str) -> Optional[str]:
-        """Query PubChem for chemical name."""
+    def _query_pubchempy(self, smiles: str) -> Optional[str]:
+        """
+        Query PubChem for chemical name using pubchempy.
+        
+        Tries to get:
+        1. Common/traditional name first
+        2. IUPAC name as fallback
+        
+        Args:
+            smiles: Canonical SMILES string
+            
+        Returns:
+            Chemical name or None if not found
+        """
         try:
-            # PubChem REST API endpoint
-            url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/{requests.utils.quote(smiles)}/property/IUPACName,Title/JSON"
+            # Search PubChem by SMILES
+            compounds = self._pcp.get_compounds(smiles, 'smiles')
             
-            response = requests.get(url, timeout=self.timeout)
+            if not compounds:
+                logger.debug(f"No PubChem compounds found for {smiles[:30]}...")
+                return None
             
-            if response.status_code == 200:
-                data = response.json()
-                props = data.get('PropertyTable', {}).get('Properties', [{}])[0]
+            compound = compounds[0]
+            
+            # Try to get synonyms (includes common names)
+            synonyms = compound.synonyms
+            
+            # Priority: common name > IUPAC name
+            # Common names are usually shorter and at the beginning of synonyms list
+            if synonyms:
+                # Filter out CID references and very long names
+                good_names = [
+                    s for s in synonyms[:10]  # Check first 10 synonyms
+                    if not s.startswith('CID')
+                    and not s.startswith('CHEMBL')
+                    and not s.startswith('SCHEMBL')
+                    and not s.startswith('DTXSID')
+                    and not s.startswith('EINECS')
+                    and len(s) < 100
+                ]
                 
-                # Prefer common title over IUPAC name if available
-                title = props.get('Title')
-                iupac = props.get('IUPACName')
-                
-                if title and not title.startswith('CID'):
-                    return title
-                elif iupac:
-                    return iupac
+                if good_names:
+                    # Prefer shorter names (often common names)
+                    best_name = min(good_names, key=len)
+                    return best_name
             
-            logger.debug(f"PubChem returned status {response.status_code} for {smiles}")
+            # Fallback to IUPAC name
+            iupac_name = compound.iupac_name
+            if iupac_name:
+                return iupac_name
+            
+            # Last resort: use the first synonym
+            if synonyms:
+                return synonyms[0]
+            
             return None
             
-        except requests.exceptions.Timeout:
-            logger.warning(f"PubChem API timeout for {smiles}")
-            return None
         except Exception as e:
-            logger.warning(f"PubChem API error: {e}")
+            logger.warning(f"PubChemPy error for {smiles[:30]}...: {e}")
             return None
     
     def _generate_systematic_name(self, mol: Chem.Mol) -> Optional[str]:
@@ -232,14 +278,21 @@ class SMILESToNameConverter:
             return None
 
 
-class ChemRXivSearcher:
+class LiteratureSearcher:
     """
-    Searches ChemRXiv for papers mentioning a chemical compound.
+    Searches multiple scientific literature databases for papers mentioning a chemical compound.
     
-    Uses the ChemRXiv API to find papers and extracts relevant abstracts.
+    Uses multiple APIs for robustness:
+    1. OpenAlex (free, no auth required) - primary source
+    2. Crossref (free, polite pool) - secondary source
+    3. Semantic Scholar (free tier) - tertiary source
     """
     
-    CHEMRXIV_API_BASE = "https://chemrxiv.org/engage/chemrxiv/public-api/v1"
+    # Standard headers to avoid 403 errors
+    HEADERS = {
+        'User-Agent': 'EnergeticMoleculeDesigner/1.0 (https://github.com/energetic-design; mailto:research@example.com)',
+        'Accept': 'application/json',
+    }
     
     def __init__(self, max_results: int = 10, timeout: int = 15):
         """
@@ -265,7 +318,7 @@ class ChemRXivSearcher:
     
     def search(self, chemical_name: str, smiles: str = None) -> List[Dict]:
         """
-        Search ChemRXiv for papers mentioning the chemical.
+        Search multiple databases for papers mentioning the chemical.
         
         Args:
             chemical_name: Chemical name to search for
@@ -275,10 +328,7 @@ class ChemRXivSearcher:
             List of paper dictionaries with title, abstract, doi, authors
         """
         # Build search query
-        query_parts = [chemical_name]
-        
-        # Add energetic material keywords to improve relevance
-        query = f'"{chemical_name}" AND (energetic OR explosive OR detonation OR propellant)'
+        query = f'{chemical_name} energetic explosive detonation'
         
         # Check cache
         cache_path = self._get_cache_path(query)
@@ -293,45 +343,22 @@ class ChemRXivSearcher:
         
         papers = []
         
-        try:
-            # ChemRXiv API search endpoint
-            url = f"{self.CHEMRXIV_API_BASE}/items"
-            params = {
-                'term': query,
-                'limit': self.max_results,
-                'sort': 'RELEVANCE'
-            }
-            
-            response = requests.get(url, params=params, timeout=self.timeout)
-            
-            if response.status_code == 200:
-                data = response.json()
-                items = data.get('itemHits', [])
-                
-                for item in items:
-                    item_data = item.get('item', {})
-                    paper = {
-                        'title': item_data.get('title', ''),
-                        'abstract': item_data.get('abstract', ''),
-                        'doi': item_data.get('doi', ''),
-                        'authors': [a.get('firstName', '') + ' ' + a.get('lastName', '') 
-                                   for a in item_data.get('authors', [])],
-                        'published_date': item_data.get('publishedDate', ''),
-                    }
-                    papers.append(paper)
-                
-                logger.info(f"Found {len(papers)} papers for '{chemical_name}'")
-            else:
-                logger.warning(f"ChemRXiv API returned status {response.status_code}")
-                
-        except requests.exceptions.Timeout:
-            logger.warning(f"ChemRXiv API timeout for '{chemical_name}'")
-        except Exception as e:
-            logger.warning(f"ChemRXiv API error: {e}")
+        # 1. Try OpenAlex first (most reliable, no auth needed)
+        openalex_papers = self._search_openalex(chemical_name)
+        papers.extend(openalex_papers)
+        logger.info(f"OpenAlex found {len(openalex_papers)} papers for '{chemical_name}'")
         
-        # Also try Crossref for additional coverage
-        crossref_papers = self._search_crossref(chemical_name)
-        papers.extend(crossref_papers)
+        # 2. Try Crossref for additional coverage
+        if len(papers) < self.max_results:
+            crossref_papers = self._search_crossref(chemical_name)
+            papers.extend(crossref_papers)
+            logger.info(f"Crossref found {len(crossref_papers)} additional papers")
+        
+        # 3. Try Semantic Scholar as fallback
+        if len(papers) < self.max_results // 2:
+            semantic_papers = self._search_semantic_scholar(chemical_name)
+            papers.extend(semantic_papers)
+            logger.info(f"Semantic Scholar found {len(semantic_papers)} additional papers")
         
         # Deduplicate by DOI
         seen_dois = set()
@@ -342,7 +369,9 @@ class ChemRXivSearcher:
                 seen_dois.add(doi)
                 unique_papers.append(paper)
             elif not doi:
-                unique_papers.append(paper)
+                # Keep papers without DOI but limit them
+                if len([p for p in unique_papers if not p.get('doi')]) < 3:
+                    unique_papers.append(paper)
         
         # Cache results
         try:
@@ -351,10 +380,88 @@ class ChemRXivSearcher:
         except Exception as e:
             logger.warning(f"Failed to cache search results: {e}")
         
+        logger.info(f"Total unique papers found: {len(unique_papers[:self.max_results])}")
         return unique_papers[:self.max_results]
     
+    def _search_openalex(self, chemical_name: str) -> List[Dict]:
+        """
+        Search OpenAlex for papers (free, no auth required).
+        
+        OpenAlex is a free, open catalog of the world's scholarly works.
+        """
+        papers = []
+        
+        try:
+            # OpenAlex API - search works
+            query = f'{chemical_name} energetic explosive detonation propellant'
+            url = "https://api.openalex.org/works"
+            params = {
+                'search': query,
+                'per_page': min(self.max_results, 25),
+                'filter': 'type:article',
+                'select': 'id,doi,title,abstract_inverted_index,authorships,publication_date',
+            }
+            
+            response = requests.get(url, params=params, headers=self.HEADERS, timeout=self.timeout)
+            
+            if response.status_code == 200:
+                data = response.json()
+                results = data.get('results', [])
+                
+                for item in results:
+                    # Reconstruct abstract from inverted index
+                    abstract = self._reconstruct_abstract(item.get('abstract_inverted_index', {}))
+                    
+                    # Extract author names
+                    authors = []
+                    for authorship in item.get('authorships', []):
+                        author_info = authorship.get('author', {})
+                        name = author_info.get('display_name', '')
+                        if name:
+                            authors.append(name)
+                    
+                    paper = {
+                        'title': item.get('title', ''),
+                        'abstract': abstract,
+                        'doi': item.get('doi', '').replace('https://doi.org/', '') if item.get('doi') else '',
+                        'authors': authors,
+                        'published_date': item.get('publication_date', ''),
+                        'source': 'OpenAlex'
+                    }
+                    
+                    if paper['title']:
+                        papers.append(paper)
+            else:
+                logger.warning(f"OpenAlex API returned status {response.status_code}")
+                        
+        except requests.exceptions.Timeout:
+            logger.warning(f"OpenAlex API timeout for '{chemical_name}'")
+        except Exception as e:
+            logger.warning(f"OpenAlex API error: {e}")
+        
+        return papers
+    
+    def _reconstruct_abstract(self, inverted_index: dict) -> str:
+        """Reconstruct abstract from OpenAlex inverted index format."""
+        if not inverted_index:
+            return ''
+        
+        try:
+            # Create list of (position, word) tuples
+            word_positions = []
+            for word, positions in inverted_index.items():
+                for pos in positions:
+                    word_positions.append((pos, word))
+            
+            # Sort by position and join
+            word_positions.sort(key=lambda x: x[0])
+            abstract = ' '.join(word for _, word in word_positions)
+            return abstract
+        except Exception:
+            return ''
+    
     def _search_crossref(self, chemical_name: str) -> List[Dict]:
-        """Search Crossref for additional papers."""
+        """Search Crossref for papers (free with polite pool)."""
         papers = []
         
         try:
@@ -362,33 +469,84 @@ class ChemRXivSearcher:
             url = "https://api.crossref.org/works"
             params = {
                 'query': query,
-                'rows': min(5, self.max_results),
+                'rows': min(10, self.max_results),
                 'filter': 'type:journal-article',
             }
-            headers = {
-                'User-Agent': 'EnergeticMoleculeDesigner/1.0 (mailto:research@example.com)'
-            }
             
-            response = requests.get(url, params=params, headers=headers, timeout=self.timeout)
+            response = requests.get(url, params=params, headers=self.HEADERS, timeout=self.timeout)
             
             if response.status_code == 200:
                 data = response.json()
                 items = data.get('message', {}).get('items', [])
                 
                 for item in items:
+                    # Clean up abstract (remove HTML tags if present)
+                    abstract = item.get('abstract', '')
+                    if abstract:
+                        abstract = re.sub(r'<[^>]+>', '', abstract)
+                    
                     paper = {
                         'title': item.get('title', [''])[0] if item.get('title') else '',
-                        'abstract': item.get('abstract', ''),
+                        'abstract': abstract,
                         'doi': item.get('DOI', ''),
                         'authors': [f"{a.get('given', '')} {a.get('family', '')}" 
                                    for a in item.get('author', [])],
                         'published_date': str(item.get('published-print', {}).get('date-parts', [['']])[0]),
+                        'source': 'Crossref'
                     }
-                    if paper['title']:  # Only add if has title
+                    if paper['title']:
                         papers.append(paper)
+            else:
+                logger.debug(f"Crossref API returned status {response.status_code}")
                         
+        except requests.exceptions.Timeout:
+            logger.debug(f"Crossref API timeout")
         except Exception as e:
             logger.debug(f"Crossref search error: {e}")
+        
+        return papers
+    
+    def _search_semantic_scholar(self, chemical_name: str) -> List[Dict]:
+        """Search Semantic Scholar for papers (free tier)."""
+        papers = []
+        
+        try:
+            query = f'{chemical_name} energetic material'
+            url = "https://api.semanticscholar.org/graph/v1/paper/search"
+            params = {
+                'query': query,
+                'limit': min(10, self.max_results),
+                'fields': 'title,abstract,authors,externalIds,publicationDate',
+            }
+            
+            response = requests.get(url, params=params, headers=self.HEADERS, timeout=self.timeout)
+            
+            if response.status_code == 200:
+                data = response.json()
+                items = data.get('data', [])
+                
+                for item in items:
+                    # Get DOI from external IDs
+                    external_ids = item.get('externalIds', {}) or {}
+                    doi = external_ids.get('DOI', '')
+                    
+                    paper = {
+                        'title': item.get('title', ''),
+                        'abstract': item.get('abstract', '') or '',
+                        'doi': doi,
+                        'authors': [a.get('name', '') for a in (item.get('authors') or [])],
+                        'published_date': item.get('publicationDate', ''),
+                        'source': 'SemanticScholar'
+                    }
+                    if paper['title'] and paper['abstract']:
+                        papers.append(paper)
+            else:
+                logger.debug(f"Semantic Scholar API returned status {response.status_code}")
+                        
+        except requests.exceptions.Timeout:
+            logger.debug(f"Semantic Scholar API timeout")
+        except Exception as e:
+            logger.debug(f"Semantic Scholar search error: {e}")
         
         return papers
 
@@ -605,7 +763,7 @@ class RAGPropertyRetriever:
             timeout: API timeout in seconds
         """
         self.name_converter = SMILESToNameConverter(use_pubchem=use_pubchem, timeout=timeout)
-        self.searcher = ChemRXivSearcher(max_results=max_papers, timeout=timeout)
+        self.searcher = LiteratureSearcher(max_results=max_papers, timeout=timeout)
         self.extractor = PropertyExtractor(use_llm=use_llm)
         
         self.use_pubchem = use_pubchem
@@ -687,7 +845,7 @@ class RAGPropertyRetriever:
         logger.info(f"Chemical name: {chemical_name}")
         
         # Step 2: Search literature
-        logger.info(f"Searching ChemRXiv for: {chemical_name}")
+        logger.info(f"Searching literature databases for: {chemical_name}")
         papers = self.searcher.search(chemical_name, smiles)
         
         papers_searched = len(papers)

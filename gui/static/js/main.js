@@ -204,7 +204,7 @@ class MolecularDesignUI {
                 </div>
                 <div class="property-row">
                     <span class="property-label">Feasibility</span>
-                    <span class="property-value">${(data.feasibility * 100).toFixed(0)}%</span>
+                    <span class="property-value">${((1 - data.feasibility) * 100).toFixed(0)}%</span>
                 </div>
                 ${this.formatProperties(data.properties)}
             </div>
@@ -239,7 +239,7 @@ class MolecularDesignUI {
                                  data-props='${JSON.stringify(cand.properties)}'>
                                 ${cand.image ? `<img src="${cand.image}" class="candidate-img" alt="Candidate ${i + 1}">` : ''}
                                 <div class="candidate-score">MAPE: ${cand.mape.toFixed(2)}%</div>
-                                <div class="candidate-feasibility">${(cand.feasibility * 100).toFixed(0)}%</div>
+                                <div class="candidate-feasibility">${((1 - cand.feasibility) * 100).toFixed(0)}%</div>
                             </div>
                         `;
         }).join('')}
@@ -292,7 +292,7 @@ class MolecularDesignUI {
             </div>
             <div class="popup-section">
                 <div class="popup-label">Feasibility</div>
-                <div class="popup-value">${(feasibility * 100).toFixed(1)}%</div>
+                <div class="popup-value">${((1 - feasibility) * 100).toFixed(1)}%</div>
             </div>
             <div class="popup-section">
                 <div class="popup-label">MAPE (vs Target)</div>
@@ -365,13 +365,13 @@ class MolecularDesignUI {
         const mape = this.calculateMAPE(data.properties);
         this.bestMAPE.textContent = mape.toFixed(2) + '%';
 
-        // Display feasibility
-        this.bestFeasibility.textContent = (data.feasibility * 100).toFixed(0) + '%';
+        // Display feasibility (inverted: 100% = most feasible, 0% = least feasible)
+        this.bestFeasibility.textContent = ((1 - data.feasibility) * 100).toFixed(0) + '%';
 
         this.bestMolecule.innerHTML = `
             <img src="${data.image}" alt="Best Molecule" class="molecule-img">
             <div class="score-badge">Score: ${data.score.toFixed(4)}</div>
-            <div class="feasibility-badge">Feasibility: ${(data.feasibility * 100).toFixed(0)}%</div>
+            <div class="feasibility-badge">Feasibility: ${((1 - data.feasibility) * 100).toFixed(0)}%</div>
             <div class="properties-grid">
                 ${this.formatProperties(data.properties)}
             </div>
