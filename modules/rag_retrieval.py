@@ -13,19 +13,14 @@ import os
 import re
 import json
 import logging
-import hashlib
 import requests
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
-from functools import lru_cache
 
 from rdkit import Chem
 from rdkit.Chem import Descriptors
 
 logger = logging.getLogger(__name__)
-
-# Cache directory for API responses
-CACHE_DIR = ".rag_cache"
 
 
 @dataclass
@@ -102,39 +97,6 @@ class SMILESToNameConverter:
             except ImportError:
                 logger.warning("pubchempy not installed. Install with: pip install pubchempy")
                 self._pubchempy_available = False
-        
-        self._ensure_cache_dir()
-    
-    def _ensure_cache_dir(self):
-        """Create cache directory if it doesn't exist."""
-        if not os.path.exists(CACHE_DIR):
-            os.makedirs(CACHE_DIR)
-    
-    def _get_cache_path(self, smiles: str) -> str:
-        """Get cache file path for a SMILES string."""
-        hash_key = hashlib.md5(smiles.encode()).hexdigest()
-        return os.path.join(CACHE_DIR, f"name_{hash_key}.json")
-    
-    def _load_from_cache(self, smiles: str) -> Optional[str]:
-        """Load name from cache if available."""
-        cache_path = self._get_cache_path(smiles)
-        if os.path.exists(cache_path):
-            try:
-                with open(cache_path, 'r') as f:
-                    data = json.load(f)
-                    return data.get('name')
-            except Exception:
-                pass
-        return None
-    
-    def _save_to_cache(self, smiles: str, name: str):
-        """Save name to cache."""
-        cache_path = self._get_cache_path(smiles)
-        try:
-            with open(cache_path, 'w') as f:
-                json.dump({'smiles': smiles, 'name': name}, f)
-        except Exception as e:
-            logger.warning(f"Failed to save to cache: {e}")
     
     def convert(self, smiles: str) -> Optional[str]:
         """
@@ -146,12 +108,6 @@ class SMILESToNameConverter:
         Returns:
             Chemical name (IUPAC or common name) or None if not found
         """
-        # Check cache first
-        cached_name = self._load_from_cache(smiles)
-        if cached_name:
-            logger.debug(f"Name found in cache: {cached_name}")
-            return cached_name
-        
         # Canonicalize SMILES
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
@@ -162,7 +118,6 @@ class SMILESToNameConverter:
         name = self._lookup_common_name(canonical_smiles)
         if name:
             logger.debug(f"Found in common names DB: {name}")
-            self._save_to_cache(smiles, name)
             return name
         
         # 2. Try PubChemPy
@@ -170,14 +125,12 @@ class SMILESToNameConverter:
             name = self._query_pubchempy(canonical_smiles)
             if name:
                 logger.debug(f"Found via PubChemPy: {name}")
-                self._save_to_cache(smiles, name)
                 return name
         
         # 3. Generate systematic name from structure (fallback)
         name = self._generate_systematic_name(mol)
         if name:
             logger.debug(f"Generated systematic name: {name}")
-            self._save_to_cache(smiles, name)
             return name
         
         return None
@@ -304,17 +257,6 @@ class LiteratureSearcher:
         """
         self.max_results = max_results
         self.timeout = timeout
-        self._ensure_cache_dir()
-    
-    def _ensure_cache_dir(self):
-        """Create cache directory if it doesn't exist."""
-        if not os.path.exists(CACHE_DIR):
-            os.makedirs(CACHE_DIR)
-    
-    def _get_cache_path(self, query: str) -> str:
-        """Get cache file path for a search query."""
-        hash_key = hashlib.md5(query.encode()).hexdigest()
-        return os.path.join(CACHE_DIR, f"search_{hash_key}.json")
     
     def search(self, chemical_name: str, smiles: str = None) -> List[Dict]:
         """
@@ -327,20 +269,6 @@ class LiteratureSearcher:
         Returns:
             List of paper dictionaries with title, abstract, doi, authors
         """
-        # Build search query
-        query = f'{chemical_name} energetic explosive detonation'
-        
-        # Check cache
-        cache_path = self._get_cache_path(query)
-        if os.path.exists(cache_path):
-            try:
-                with open(cache_path, 'r') as f:
-                    cached_data = json.load(f)
-                    logger.debug(f"Search results loaded from cache for: {chemical_name}")
-                    return cached_data.get('papers', [])
-            except Exception:
-                pass
-        
         papers = []
         
         # 1. Try OpenAlex first (most reliable, no auth needed)
@@ -372,13 +300,6 @@ class LiteratureSearcher:
                 # Keep papers without DOI but limit them
                 if len([p for p in unique_papers if not p.get('doi')]) < 3:
                     unique_papers.append(paper)
-        
-        # Cache results
-        try:
-            with open(cache_path, 'w') as f:
-                json.dump({'query': query, 'papers': unique_papers[:self.max_results]}, f)
-        except Exception as e:
-            logger.warning(f"Failed to cache search results: {e}")
         
         logger.info(f"Total unique papers found: {len(unique_papers[:self.max_results])}")
         return unique_papers[:self.max_results]
@@ -768,17 +689,6 @@ class RAGPropertyRetriever:
         
         self.use_pubchem = use_pubchem
         self.use_llm = use_llm
-        self._ensure_cache_dir()
-    
-    def _ensure_cache_dir(self):
-        """Create cache directory if it doesn't exist."""
-        if not os.path.exists(CACHE_DIR):
-            os.makedirs(CACHE_DIR)
-    
-    def _get_cache_path(self, smiles: str) -> str:
-        """Get cache file path for RAG results."""
-        hash_key = hashlib.md5(smiles.encode()).hexdigest()
-        return os.path.join(CACHE_DIR, f"rag_{hash_key}.json")
     
     def retrieve_properties(self, smiles: str) -> RAGResult:
         """
@@ -790,36 +700,6 @@ class RAGPropertyRetriever:
         Returns:
             RAGResult with found properties
         """
-        # Check cache first
-        cache_path = self._get_cache_path(smiles)
-        if os.path.exists(cache_path):
-            try:
-                with open(cache_path, 'r') as f:
-                    cached = json.load(f)
-                    logger.info(f"RAG results loaded from cache for {smiles[:30]}...")
-                    
-                    # Reconstruct RAGResult from cached data
-                    properties = {}
-                    for prop_name, prop_data in cached.get('properties', {}).items():
-                        if prop_data:
-                            properties[prop_name] = RetrievedProperty(
-                                value=prop_data['value'],
-                                source=prop_data['source'],
-                                confidence=prop_data['confidence']
-                            )
-                        else:
-                            properties[prop_name] = None
-                    
-                    return RAGResult(
-                        smiles=smiles,
-                        chemical_name=cached.get('chemical_name'),
-                        properties=properties,
-                        papers_searched=cached.get('papers_searched', 0),
-                        papers_with_hits=cached.get('papers_with_hits', 0)
-                    )
-            except Exception as e:
-                logger.warning(f"Failed to load from cache: {e}")
-        
         # Initialize result
         properties = {
             'Density': None,
@@ -887,33 +767,11 @@ class RAGPropertyRetriever:
             papers_with_hits=papers_with_hits
         )
         
-        # Cache results
-        self._cache_result(smiles, result)
-        
         # Log summary
         found_props = [k for k, v in properties.items() if v is not None]
         logger.info(f"RAG found {len(found_props)}/4 properties: {found_props}")
         
         return result
-    
-    def _cache_result(self, smiles: str, result: RAGResult):
-        """Cache RAG result to disk."""
-        cache_path = self._get_cache_path(smiles)
-        try:
-            data = {
-                'smiles': result.smiles,
-                'chemical_name': result.chemical_name,
-                'properties': {
-                    k: {'value': v.value, 'source': v.source, 'confidence': v.confidence} if v else None
-                    for k, v in result.properties.items()
-                },
-                'papers_searched': result.papers_searched,
-                'papers_with_hits': result.papers_with_hits
-            }
-            with open(cache_path, 'w') as f:
-                json.dump(data, f)
-        except Exception as e:
-            logger.warning(f"Failed to cache RAG result: {e}")
 
 
 def get_properties_with_rag(smiles: str, 

@@ -632,7 +632,6 @@ class RAGConfig:
     use_llm: bool = False             # Use LLM for extraction (requires API key)
     max_papers: int = 10              # Max papers to search
     timeout: int = 15                 # API timeout (seconds)
-    cache_dir: str = ".rag_cache"     # Cache directory
 ```
 
 ### 7.6 Property Source Tracking
@@ -843,7 +842,6 @@ classDiagram
         bool use_llm = False
         int max_papers = 10
         int timeout = 15
-        str cache_dir = ".rag_cache"
     }
     
     class SystemConfig {

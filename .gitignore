@@ -9,6 +9,3 @@ __pycache__/
 *$py.class
 *.so
 .Python
-
-# RAG cache (API responses)
-.rag_cache/
