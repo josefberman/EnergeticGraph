@@ -16,9 +16,9 @@ class MoleculeState:
     smiles: str  # SMILES representation
     properties: Dict[str, float] = field(default_factory=dict)  # Predicted properties
     score: float = float('inf')  # Total score (lower is better)
-    feasibility: float = 0.0  # Feasibility score (0-1, higher is better)
+    feasibility: float = 1.0  # Normalized SAScore (0-1, 0 = most feasible, 1 = least feasible)
     provenance: str = ""  # History of modifications
-    is_feasible: bool = False  # Whether molecule passes feasibility checks
+    is_feasible: bool = False  # Whether molecule passes feasibility checks (SAScore <= 7)
     generation: int = 0  # Which iteration this molecule was created in
     parent_smiles: Optional[str] = None  # Parent molecule SMILES
     

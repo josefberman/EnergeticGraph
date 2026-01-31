@@ -80,21 +80,24 @@ def calculate_mape(predicted_props: Dict[str, float],
 
 def calculate_total_score(predicted_props: Dict[str, float],
                           target_props: Dict[str, float],
-                          feasibility: float,
+                          normalized_sascore: float,
                           mape_weight: float = 0.7,
-                          feasibility_weight: float = 0.3,
+                          sascore_weight: float = 0.3,
                           property_weights: Dict[str, float] = None) -> float:
     """
-    Calculate total score combining MAPE and feasibility.
+    Calculate total score combining MAPE and normalized SAScore.
     
-    Score = mape_weight * (MAPE/100) + feasibility_weight * (1 - feasibility)
+    Score = mape_weight * (MAPE/100) + sascore_weight * normalized_sascore
+    
+    Both components are 0-1 where lower is better, so the total score
+    is minimized for better candidates.
     
     Args:
         predicted_props: Predicted properties
         target_props: Target properties
-        feasibility: Feasibility score (0-1, higher is better)
+        normalized_sascore: Normalized SAScore (0-1, 0 = most feasible, 1 = least feasible)
         mape_weight: Weight for property accuracy (default 0.7)
-        feasibility_weight: Weight for feasibility (default 0.3)
+        sascore_weight: Weight for synthetic accessibility (default 0.3)
         property_weights: Weights for each property in MAPE calculation
         
     Returns:
@@ -115,11 +118,7 @@ def calculate_total_score(predicted_props: Dict[str, float],
     # Convert MAPE percentage to 0-1 scale for scoring (cap at 100%)
     mape_normalized = min(mape / 100.0, 1.0)
     
-    # Calculate feasibility penalty (1 - feasibility)
-    # Higher feasibility = lower penalty
-    feasibility_penalty = 1.0 - feasibility
-    
-    # Combined score
-    total_score = mape_weight * mape_normalized + feasibility_weight * feasibility_penalty
+    # Combined score: both terms are 0-1 where lower is better
+    total_score = mape_weight * mape_normalized + sascore_weight * normalized_sascore
     
     return total_score

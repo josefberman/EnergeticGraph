@@ -135,40 +135,32 @@ def check_valency(smiles: str) -> bool:
 
 def calculate_feasibility(smiles: str) -> Tuple[float, bool]:
     """
-    Calculate overall feasibility score.
+    Calculate normalized synthetic accessibility score.
     
     Args:
         smiles: SMILES string
         
     Returns:
-        Tuple of (feasibility_score, is_feasible_bool)
-        - feasibility_score: 0-1 (higher is better)
-        - is_feasible_bool: True if passes basic checks
+        Tuple of (normalized_sascore, is_feasible_bool)
+        - normalized_sascore: 0-1 (0 = most feasible, 1 = least feasible)
+          Used directly in combined score: 0.7*MAPE + 0.3*normalized_sascore
+        - is_feasible_bool: True if passes basic checks (SAScore <= 7)
     """
-    # Check valency first
+    # Check valency first - invalid molecules get worst score
     if not check_valency(smiles):
-        return 0.0, False
+        return 1.0, False
     
-    # Calculate SAScore
+    # Calculate SAScore (1-10 scale, where 1 = easy, 10 = hard)
     sascore = calculate_sascore(smiles)
     
-    # Convert SAScore (1-10, lower is better) to feasibility (0-1, higher is better)
-    # More nuanced conversion:
-    # SAScore 1-3: Easy synthesis (90-100% feasibility)
-    # SAScore 3-5: Moderate (70-90% feasibility)  
-    # SAScore 5-7: Challenging but doable (50-70% feasibility)
-    # SAScore 7-10: Very difficult (0-50% feasibility)
+    # Normalize SAScore to 0-1 range (0 = most feasible, 1 = least feasible)
+    # Linear normalization: (sascore - 1) / (10 - 1) = (sascore - 1) / 9
+    normalized_sascore = (sascore - 1.0) / 9.0
     
-    if sascore <= 3.0:
-        feasibility_score = 0.90 + (3.0 - sascore) / 20.0  # 90-100%
-    elif sascore <= 5.0:
-        feasibility_score = 0.70 + (5.0 - sascore) * 0.10  # 70-90%
-    elif sascore <= 7.0:
-        feasibility_score = 0.50 + (7.0 - sascore) * 0.10  # 50-70%
-    else:
-        feasibility_score = max(0.0, 0.50 - (sascore - 7.0) * 0.167)  # 0-50%
+    # Clamp to [0, 1] range
+    normalized_sascore = max(0.0, min(1.0, normalized_sascore))
     
     # Consider feasible if SAScore <= 7 (moderately synthesizable)
     is_feasible = sascore <= 7.0
     
-    return feasibility_score, is_feasible
+    return normalized_sascore, is_feasible

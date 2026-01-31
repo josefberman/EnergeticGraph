@@ -138,7 +138,7 @@ def find_closest_match(dataset: pd.DataFrame,
         smiles=best_smiles,
         properties=best_props,
         score=best_distance,  # Initial score is distance to target
-        feasibility=1.0,  # Assume dataset molecules are feasible
+        feasibility=0.0,  # Assume dataset molecules are most feasible (normalized SAScore: 0 = best)
         is_feasible=True,
         provenance="seed_from_dataset",
         generation=0
