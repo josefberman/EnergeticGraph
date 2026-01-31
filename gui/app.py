@@ -12,6 +12,10 @@ from dotenv import load_dotenv
 from queue import Queue
 import threading
 
+# Suppress RDKit warnings (must be done before importing other modules that use RDKit)
+from rdkit import RDLogger
+RDLogger.DisableLog('rdApp.*')
+
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
