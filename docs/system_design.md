@@ -9,6 +9,7 @@
 The **Energetic Molecular Design System (EMDS)** is an AI-driven framework designed to accelerate the discovery of novel energetic materials (explosives, propellants). By combining a **literature-informed Strategy Pool** with a **Beam Search** optimization algorithm, EMDS navigates the vast chemical space to identify molecules that satisfy stringent trade-offs between performance (detonation velocity/pressure) and feasibility (stability, synthetic accessibility).
 
 ### Key Innovations
+- **RAG Property Retrieval**: Searches ChemRXiv/Crossref for known property values before ML prediction
 - **81-Tuple Strategy Pool**: Literature-backed chemical transformations indexed by property direction requirements
 - **MAPE-Based Optimization**: Mean Absolute Percentage Error scoring for direct property targeting
 - **Multi-level Feasibility Gating**: SAScore + valency validation ensures synthetic plausibility
@@ -35,6 +36,7 @@ flowchart TB
     subgraph Chemical["⚗️ Chemical Logic Layer"]
         StrategyPool[Strategy Pool<br/>81 Transformations]
         Feasibility[Feasibility Filter<br/>SAScore + Valency]
+        RAG[RAG Retriever<br/>Literature Search]
         Predictor[Property Predictor<br/>XGBoost Models]
         ModTools[Modification Tools<br/>RDKit Operations]
     end
@@ -44,6 +46,7 @@ flowchart TB
         Config[Configuration<br/>Hyperparameters]
         Models[(ML Models<br/>*.joblib)]
         Dataset[(Seed Dataset<br/>CSV)]
+        ChemRXiv[(ChemRXiv<br/>Crossref APIs)]
     end
     
     CLI --> Designer
@@ -55,9 +58,12 @@ flowchart TB
     
     ChemistAgent --> StrategyPool
     ChemistAgent --> Feasibility
+    ChemistAgent --> RAG
     ChemistAgent --> Predictor
     StrategyPool --> ModTools
     
+    RAG --> ChemRXiv
+    RAG --> Predictor
     Predictor --> Models
     Designer --> Dataset
     ChemistAgent --> MolState
@@ -151,6 +157,7 @@ classDiagram
 |-----------|------|-------------|
 | **StrategyPoolModifier** | `modules/strategy_pool.py` | 81-tuple indexed chemical transformations based on literature |
 | **FeasibilityFilter** | `modules/feasibility.py` | SAScore calculation + RDKit valency validation |
+| **RAGPropertyRetriever** | `modules/rag_retrieval.py` | SMILES-to-name conversion + ChemRXiv/Crossref literature search |
 | **PropertyPredictor** | `modules/prediction.py` | XGBoost ensemble for predicting energetic properties |
 | **ModificationTools** | `modules/modification_tools.py` | RDKit-based addition, subtraction, substitution, ring modifications |
 
@@ -217,6 +224,7 @@ classDiagram
         +BeamSearchConfig beam_search
         +ScoringConfig scoring
         +StrategyPoolConfig strategy_pool
+        +RAGConfig rag
         +SystemConfig system
     }
     
@@ -495,9 +503,144 @@ The simple SAScore estimator is tuned for energetic materials:
 
 ---
 
-## 7. Property Prediction Pipeline
+## 7. RAG Property Retrieval Module
 
-### 7.1 Descriptor Generation
+The RAG (Retrieval-Augmented Generation) module searches scientific literature for known property values before falling back to ML prediction. This improves accuracy for well-studied molecules.
+
+### 7.1 RAG Pipeline Overview
+
+```mermaid
+flowchart TB
+    subgraph Input["Input"]
+        SMILES[Candidate SMILES]
+    end
+    
+    subgraph NameConversion["Step 1: SMILES → Name"]
+        SMILES --> Cache1{In Cache?}
+        Cache1 -->|Yes| Name1[Cached Name]
+        Cache1 -->|No| CommonDB[Common Names DB]
+        CommonDB -->|Not Found| PubChem[PubChem API]
+        PubChem -->|Not Found| Systematic[Generate Systematic]
+        CommonDB -->|Found| Name1
+        PubChem -->|Found| Name1
+        Systematic --> Name1
+    end
+    
+    subgraph Search["Step 2: Literature Search"]
+        Name1 --> ChemRXiv[ChemRXiv API]
+        Name1 --> Crossref[Crossref API]
+        ChemRXiv --> Papers[Paper Abstracts]
+        Crossref --> Papers
+    end
+    
+    subgraph Extract["Step 3: Property Extraction"]
+        Papers --> Regex[Regex Patterns]
+        Papers --> LLM[LLM Extraction<br/>Optional]
+        Regex --> Found[Found Properties]
+        LLM --> Found
+    end
+    
+    subgraph Fallback["Step 4: ML Fallback"]
+        Found --> Check{All 4<br/>Properties?}
+        Check -->|No| MLPredict[XGBoost<br/>Prediction]
+        Check -->|Yes| Output
+        MLPredict --> Output[Complete<br/>Properties]
+    end
+    
+    style NameConversion fill:#e3f2fd,stroke:#1565c0
+    style Search fill:#fff3e0,stroke:#ef6c00
+    style Extract fill:#e8f5e9,stroke:#2e7d32
+    style Fallback fill:#fce4ec,stroke:#c2185b
+```
+
+### 7.2 SMILES-to-Name Conversion
+
+The system converts SMILES to chemical names using multiple sources:
+
+| Priority | Source | Description |
+|----------|--------|-------------|
+| 1 | Common Names DB | Pre-loaded database of ~50 common energetic materials (TNT, RDX, HMX, etc.) |
+| 2 | PubChem API | REST API lookup for IUPAC and common names |
+| 3 | Systematic | Generated descriptive name from molecular features |
+
+```mermaid
+classDiagram
+    class SMILESToNameConverter {
+        +Dict COMMON_NAMES
+        +bool use_pubchem
+        +int timeout
+        +convert(smiles) str
+        -_lookup_common_name(smiles) str
+        -_query_pubchem(smiles) str
+        -_generate_systematic_name(mol) str
+    }
+```
+
+### 7.3 Literature Search
+
+Papers are searched from two sources:
+
+| Source | API Endpoint | Focus |
+|--------|--------------|-------|
+| **ChemRXiv** | `chemrxiv.org/engage/chemrxiv/public-api/v1` | Preprints, cutting-edge research |
+| **Crossref** | `api.crossref.org/works` | Published journal articles |
+
+Search query format:
+```
+"{chemical_name}" AND (energetic OR explosive OR detonation OR propellant)
+```
+
+### 7.4 Property Extraction
+
+Properties are extracted using regex patterns with unit conversion:
+
+| Property | Patterns | Units |
+|----------|----------|-------|
+| Density | `density of X g/cm³`, `ρ = X g cm⁻³` | g/cm³ |
+| Det. Velocity | `detonation velocity X m/s`, `D = X km/s` | m/s |
+| Det. Pressure | `detonation pressure X GPa`, `P_CJ = X kbar` | GPa |
+| Hf solid | `heat of formation X kJ/mol`, `ΔHf = X kcal/mol` | kJ/mol |
+
+**Validation Ranges:**
+- Density: 0.5 - 3.0 g/cm³
+- Det. Velocity: 4,000 - 12,000 m/s
+- Det. Pressure: 10 - 60 GPa
+- Hf solid: -500 - 1,000 kJ/mol
+
+### 7.5 RAG Configuration
+
+```python
+@dataclass
+class RAGConfig:
+    enable_rag: bool = True           # Enable RAG retrieval
+    use_pubchem: bool = True          # Use PubChem for name lookup
+    use_llm: bool = False             # Use LLM for extraction (requires API key)
+    max_papers: int = 10              # Max papers to search
+    timeout: int = 15                 # API timeout (seconds)
+    cache_dir: str = ".rag_cache"     # Cache directory
+```
+
+### 7.6 Property Source Tracking
+
+Each property tracks its source for transparency:
+
+```python
+# Example property sources
+{
+    'Density': 'literature (Klapötke et al. 2017...)',
+    'Det Velocity': 'predicted (XGBoost)',
+    'Det Pressure': 'literature (J. Energetic Mat...)',
+    'Hf solid': 'predicted (XGBoost)'
+}
+```
+
+---
+
+## 8. ML Property Prediction (Fallback)
+
+When RAG doesn't find property values, the system falls back to XGBoost ML models.
+
+### 8.1 Descriptor Generation
 
 The system generates a 90+ dimensional descriptor vector from SMILES:
 
@@ -530,7 +673,7 @@ flowchart LR
     style Vector fill:#e8f5e9,stroke:#388e3c
 ```
 
-### 7.2 XGBoost Model Ensemble
+### 8.2 XGBoost Model Ensemble
 
 ```mermaid
 flowchart TB
@@ -559,7 +702,7 @@ flowchart TB
 
 ---
 
-## 8. Data Flow: Complete Pipeline
+## 9. Data Flow: Complete Pipeline
 
 ```mermaid
 flowchart TB
@@ -614,7 +757,7 @@ flowchart TB
 
 ---
 
-## 9. Molecule State Lifecycle
+## 10. Molecule State Lifecycle
 
 ```mermaid
 stateDiagram-v2
@@ -648,7 +791,7 @@ stateDiagram-v2
 
 ---
 
-## 10. Configuration Schema
+## 11. Configuration Schema
 
 ```mermaid
 classDiagram
@@ -656,6 +799,7 @@ classDiagram
         BeamSearchConfig beam_search
         ScoringConfig scoring
         StrategyPoolConfig strategy_pool
+        RAGConfig rag
         SystemConfig system
     }
     
@@ -678,6 +822,15 @@ classDiagram
         float max_sascore = 0.67
     }
     
+    class RAGConfig {
+        bool enable_rag = True
+        bool use_pubchem = True
+        bool use_llm = False
+        int max_papers = 10
+        int timeout = 15
+        str cache_dir = ".rag_cache"
+    }
+    
     class SystemConfig {
         str models_directory = "./models"
         str dataset_path = "./sample_start_molecules.csv"
@@ -689,6 +842,7 @@ classDiagram
     Config *-- BeamSearchConfig
     Config *-- ScoringConfig
     Config *-- StrategyPoolConfig
+    Config *-- RAGConfig
     Config *-- SystemConfig
 ```
 
@@ -703,7 +857,7 @@ classDiagram
 
 ---
 
-## 11. Technology Stack
+## 12. Technology Stack
 
 | Layer | Component | Technology | Purpose |
 |-------|-----------|------------|---------|
@@ -716,7 +870,7 @@ classDiagram
 
 ---
 
-## 12. File Structure
+## 13. File Structure
 
 ```
 EnergeticGraph/
@@ -732,6 +886,7 @@ EnergeticGraph/
 ├── modules/
 │   ├── strategy_pool.py     # 81-tuple strategy system
 │   ├── feasibility.py       # SAScore + validation
+│   ├── rag_retrieval.py     # RAG property retrieval from literature
 │   ├── prediction.py        # XGBoost property prediction
 │   ├── scoring.py           # MAPE calculation
 │   ├── initialization.py    # Seed molecule selection
@@ -760,7 +915,7 @@ EnergeticGraph/
 
 ---
 
-## 13. Usage Example
+## 14. Usage Example
 
 ```python
 from designer import EnergeticDesigner
@@ -795,9 +950,9 @@ print(f"Properties: {best_molecule.properties}")
 
 ---
 
-## 14. System Behavior Diagrams
+## 15. System Behavior Diagrams
 
-### 14.1 Iteration Convergence
+### 15.1 Iteration Convergence
 
 ```mermaid
 xychart-beta
@@ -807,7 +962,7 @@ xychart-beta
     line [45, 38, 31, 25, 20, 16, 13, 11, 9, 8, 7.2, 6.8, 6.5, 6.3, 6.2]
 ```
 
-### 14.2 Beam Exploration Pattern
+### 15.2 Beam Exploration Pattern
 
 ```mermaid
 flowchart TB
@@ -838,7 +993,7 @@ flowchart TB
 
 ---
 
-## 15. Publication Figure Guidelines
+## 16. Publication Figure Guidelines
 
 ### Recommended Visualization Approach
 
@@ -862,7 +1017,7 @@ For academic publication, create a **three-panel figure**:
 
 ---
 
-## 16. Extension Points
+## 17. Extension Points
 
 ### Adding New Strategies
 
@@ -887,7 +1042,7 @@ For academic publication, create a **three-panel figure**:
 
 ---
 
-## 17. Performance Characteristics
+## 18. Performance Characteristics
 
 | Metric | Typical Value | Notes |
 |--------|---------------|-------|

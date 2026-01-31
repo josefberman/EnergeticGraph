@@ -50,6 +50,28 @@ class StrategyPoolConfig:
 
 
 @dataclass
+class RAGConfig:
+    """Configuration for RAG (Retrieval-Augmented Generation) property lookup."""
+    # Enable RAG property retrieval from literature
+    enable_rag: bool = True
+    
+    # Use PubChem API for SMILES-to-name conversion
+    use_pubchem: bool = True
+    
+    # Use LLM (GPT-4) for property extraction from abstracts
+    use_llm: bool = False
+    
+    # Maximum number of papers to search per molecule
+    max_papers: int = 10
+    
+    # API timeout in seconds
+    timeout: int = 15
+    
+    # Cache directory for RAG results
+    cache_dir: str = ".rag_cache"
+
+
+@dataclass
 class SystemConfig:
     """System-level configuration."""
     models_directory: str = "./models"  # Path to XGBoost models
@@ -65,10 +87,5 @@ class Config:
     beam_search: BeamSearchConfig = field(default_factory=BeamSearchConfig)
     scoring: ScoringConfig = field(default_factory=ScoringConfig)
     strategy_pool: StrategyPoolConfig = field(default_factory=StrategyPoolConfig)
+    rag: RAGConfig = field(default_factory=RAGConfig)
     system: SystemConfig = field(default_factory=SystemConfig)
-    
-    # Legacy compatibility - kept for any code that references config.rag
-    @property
-    def rag(self):
-        """Legacy property for backward compatibility."""
-        return self.strategy_pool
