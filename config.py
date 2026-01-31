@@ -66,9 +66,6 @@ class RAGConfig:
     
     # API timeout in seconds
     timeout: int = 15
-    
-    # Cache directory for RAG results
-    cache_dir: str = ".rag_cache"
 
 
 @dataclass
