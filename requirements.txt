@@ -18,6 +18,10 @@ langchain-community>=0.0.20
 openai>=1.10.0
 arxiv>=2.0.0
 
+# Chemical name resolution
+pubchempy>=1.0.4
+requests>=2.31.0
+
 # Vector Database (using FAISS instead of ChromaDB for better stability)
 faiss-cpu>=1.7.4
 

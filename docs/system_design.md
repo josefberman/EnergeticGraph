@@ -9,7 +9,7 @@
 The **Energetic Molecular Design System (EMDS)** is an AI-driven framework designed to accelerate the discovery of novel energetic materials (explosives, propellants). By combining a **literature-informed Strategy Pool** with a **Beam Search** optimization algorithm, EMDS navigates the vast chemical space to identify molecules that satisfy stringent trade-offs between performance (detonation velocity/pressure) and feasibility (stability, synthetic accessibility).
 
 ### Key Innovations
-- **RAG Property Retrieval**: Searches ChemRXiv/Crossref for known property values before ML prediction
+- **RAG Property Retrieval**: Searches scientific literature (OpenAlex, Crossref, Semantic Scholar) for known property values before ML prediction
 - **81-Tuple Strategy Pool**: Literature-backed chemical transformations indexed by property direction requirements
 - **MAPE-Based Optimization**: Mean Absolute Percentage Error scoring for direct property targeting
 - **Multi-level Feasibility Gating**: SAScore + valency validation ensures synthetic plausibility
@@ -46,7 +46,7 @@ flowchart TB
         Config[Configuration<br/>Hyperparameters]
         Models[(ML Models<br/>*.joblib)]
         Dataset[(Seed Dataset<br/>CSV)]
-        ChemRXiv[(ChemRXiv<br/>Crossref APIs)]
+        Literature[(OpenAlex<br/>Crossref<br/>Semantic Scholar)]
     end
     
     CLI --> Designer
@@ -62,7 +62,7 @@ flowchart TB
     ChemistAgent --> Predictor
     StrategyPool --> ModTools
     
-    RAG --> ChemRXiv
+    RAG --> Literature
     RAG --> Predictor
     Predictor --> Models
     Designer --> Dataset
@@ -157,7 +157,7 @@ classDiagram
 |-----------|------|-------------|
 | **StrategyPoolModifier** | `modules/strategy_pool.py` | 81-tuple indexed chemical transformations based on literature |
 | **FeasibilityFilter** | `modules/feasibility.py` | SAScore calculation + RDKit valency validation |
-| **RAGPropertyRetriever** | `modules/rag_retrieval.py` | SMILES-to-name conversion + ChemRXiv/Crossref literature search |
+| **RAGPropertyRetriever** | `modules/rag_retrieval.py` | SMILES-to-name conversion + multi-database literature search (OpenAlex, Crossref, Semantic Scholar) |
 | **PropertyPredictor** | `modules/prediction.py` | XGBoost ensemble for predicting energetic properties |
 | **ModificationTools** | `modules/modification_tools.py` | RDKit-based addition, subtraction, substitution, ring modifications |
 
@@ -527,10 +527,12 @@ flowchart TB
     end
     
     subgraph Search["Step 2: Literature Search"]
-        Name1 --> ChemRXiv[ChemRXiv API]
+        Name1 --> OpenAlex[OpenAlex API]
         Name1 --> Crossref[Crossref API]
-        ChemRXiv --> Papers[Paper Abstracts]
+        Name1 --> SemanticScholar[Semantic Scholar]
+        OpenAlex --> Papers[Paper Abstracts]
         Crossref --> Papers
+        SemanticScholar --> Papers
     end
     
     subgraph Extract["Step 3: Property Extraction"]
@@ -559,9 +561,21 @@ The system converts SMILES to chemical names using multiple sources:
 
 | Priority | Source | Description |
 |----------|--------|-------------|
-| 1 | Common Names DB | Pre-loaded database of ~50 common energetic materials (TNT, RDX, HMX, etc.) |
-| 2 | PubChem API | REST API lookup for IUPAC and common names |
-| 3 | Systematic | Generated descriptive name from molecular features |
+| 1 | Common Names DB | Pre-loaded database of common energetic materials (TNT, RDX, HMX, etc.) |
+| 2 | PubChemPy | Python package for PubChem API - retrieves IUPAC and common names |
+| 3 | Systematic | Generated descriptive name from molecular features (fallback) |
+
+**PubChemPy Usage:**
+```python
+import pubchempy as pcp
+
+# Get compound by SMILES
+compounds = pcp.get_compounds(smiles, 'smiles')
+
+# Access synonyms (common names first) and IUPAC name
+name = compounds[0].synonyms[0]  # Common name
+iupac = compounds[0].iupac_name   # IUPAC name
+```
 
 ```mermaid
 classDiagram
@@ -582,8 +596,9 @@ Papers are searched from two sources:
 
 | Source | API Endpoint | Focus |
 |--------|--------------|-------|
-| **ChemRXiv** | `chemrxiv.org/engage/chemrxiv/public-api/v1` | Preprints, cutting-edge research |
-| **Crossref** | `api.crossref.org/works` | Published journal articles |
+| **OpenAlex** | `api.openalex.org/works` | Open scholarly catalog (primary, no auth) |
+| **Crossref** | `api.crossref.org/works` | Published journal articles (secondary) |
+| **Semantic Scholar** | `api.semanticscholar.org/graph/v1/paper/search` | AI-curated papers (tertiary) |
 
 Search query format:
 ```
