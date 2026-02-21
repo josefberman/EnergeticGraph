@@ -9,3 +9,6 @@ __pycache__/
 *$py.class
 *.so
 .Python
+
+# RAG evaluation results
+evaluation/evaluation/results/

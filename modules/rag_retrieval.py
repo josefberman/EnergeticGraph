@@ -4,7 +4,7 @@ RAG (Retrieval-Augmented Generation) module for energetic property lookup.
 This module searches scientific literature for known property values before
 falling back to ML prediction. It:
 1. Converts SMILES to proper chemical names (IUPAC/common)
-2. Searches multiple databases (OpenAlex, Crossref, Semantic Scholar) for papers
+2. Searches multiple databases (OpenAlex, ArXiv, Crossref, Semantic Scholar) for papers
 3. Extracts energetic properties from paper abstracts using regex/LLM
 4. Returns found properties, with None for properties not found
 """
@@ -14,12 +14,170 @@ import re
 import json
 import logging
 import requests
+import tempfile
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
 from rdkit import Chem
 
+# Try to import PDF parsing library
+try:
+    import fitz  # PyMuPDF
+    PDF_PARSER_AVAILABLE = True
+except ImportError as e:
+    PDF_PARSER_AVAILABLE = False
+    logging.getLogger(__name__).warning(f"PyMuPDF not installed: {e}. Install with: pip install pymupdf")
+except Exception as e:
+    PDF_PARSER_AVAILABLE = False
+    logging.getLogger(__name__).warning(f"PyMuPDF import failed: {e}")
+
+# Try to import sentence transformers for embeddings
+try:
+    from sentence_transformers import SentenceTransformer
+    import numpy as np
+    EMBEDDINGS_AVAILABLE = True
+except ImportError:
+    EMBEDDINGS_AVAILABLE = False
+    logging.getLogger(__name__).warning("sentence-transformers not installed. Install with: pip install sentence-transformers")
+
 logger = logging.getLogger(__name__)
+
+
+class TextChunker:
+    """
+    Chunks text into smaller pieces for embedding-based retrieval.
+    """
+    
+    def __init__(self, chunk_size: int = 500, chunk_overlap: int = 100):
+        """
+        Initialize chunker.
+        
+        Args:
+            chunk_size: Target size of each chunk in characters
+            chunk_overlap: Overlap between consecutive chunks
+        """
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+    
+    def chunk_text(self, text: str) -> List[str]:
+        """
+        Split text into overlapping chunks.
+        
+        Args:
+            text: Full text to chunk
+            
+        Returns:
+            List of text chunks
+        """
+        if not text or len(text) < self.chunk_size:
+            return [text] if text else []
+        
+        chunks = []
+        
+        # Split by paragraphs first for more natural breaks
+        paragraphs = text.split('\n\n')
+        
+        current_chunk = ""
+        for para in paragraphs:
+            para = para.strip()
+            if not para:
+                continue
+            
+            # If adding this paragraph exceeds chunk size, save current and start new
+            if len(current_chunk) + len(para) > self.chunk_size and current_chunk:
+                chunks.append(current_chunk.strip())
+                # Keep overlap from end of previous chunk
+                overlap_start = max(0, len(current_chunk) - self.chunk_overlap)
+                current_chunk = current_chunk[overlap_start:] + "\n\n" + para
+            else:
+                current_chunk += "\n\n" + para if current_chunk else para
+        
+        # Don't forget the last chunk
+        if current_chunk.strip():
+            chunks.append(current_chunk.strip())
+        
+        return chunks
+
+
+class ChunkRetriever:
+    """
+    Retrieves relevant chunks using embedding-based similarity search.
+    """
+    
+    # Singleton pattern for model (expensive to load)
+    _model = None
+    _model_name = "all-MiniLM-L6-v2"  # Fast, good quality embeddings
+    
+    def __init__(self):
+        """Initialize retriever with sentence transformer model."""
+        if not EMBEDDINGS_AVAILABLE:
+            self._model = None
+            return
+            
+        # Load model (singleton)
+        if ChunkRetriever._model is None:
+            try:
+                logger.info(f"Loading embedding model: {self._model_name}")
+                ChunkRetriever._model = SentenceTransformer(self._model_name)
+            except Exception as e:
+                logger.warning(f"Failed to load embedding model: {e}")
+                ChunkRetriever._model = None
+    
+    def retrieve_relevant_chunks(
+        self, 
+        chunks: List[str], 
+        query: str, 
+        top_k: int = 5,
+        similarity_threshold: float = 0.3
+    ) -> List[Tuple[str, float]]:
+        """
+        Retrieve most relevant chunks for a query using cosine similarity.
+        
+        Args:
+            chunks: List of text chunks
+            query: Search query (e.g., "density detonation velocity TNT")
+            top_k: Number of top chunks to return
+            similarity_threshold: Minimum similarity score to include
+            
+        Returns:
+            List of (chunk, similarity_score) tuples, sorted by relevance
+        """
+        if not chunks:
+            return []
+        
+        # If embeddings not available, return all chunks with equal score
+        if not EMBEDDINGS_AVAILABLE or ChunkRetriever._model is None:
+            return [(chunk, 1.0) for chunk in chunks[:top_k]]
+        
+        try:
+            # Embed query and chunks
+            query_embedding = ChunkRetriever._model.encode([query])[0]
+            chunk_embeddings = ChunkRetriever._model.encode(chunks)
+            
+            # Calculate cosine similarities
+            similarities = []
+            for i, chunk_emb in enumerate(chunk_embeddings):
+                # Cosine similarity
+                similarity = np.dot(query_embedding, chunk_emb) / (
+                    np.linalg.norm(query_embedding) * np.linalg.norm(chunk_emb) + 1e-8
+                )
+                similarities.append((chunks[i], float(similarity)))
+            
+            # Sort by similarity (descending)
+            similarities.sort(key=lambda x: x[1], reverse=True)
+            
+            # Filter by threshold and return top_k
+            relevant = [
+                (chunk, score) for chunk, score in similarities 
+                if score >= similarity_threshold
+            ]
+            
+            return relevant[:top_k]
+            
+        except Exception as e:
+            logger.warning(f"Embedding retrieval failed: {e}")
+            # Fallback: return first chunks
+            return [(chunk, 1.0) for chunk in chunks[:top_k]]
 
 
 @dataclass
@@ -230,8 +388,9 @@ class LiteratureSearcher:
     
     Uses multiple APIs for robustness:
     1. OpenAlex (free, no auth required) - primary source
-    2. Crossref (free, polite pool) - secondary source
-    3. Semantic Scholar (free tier) - tertiary source
+    2. ArXiv (free, open access) - secondary source for preprints
+    3. Crossref (free, polite pool) - tertiary source
+    4. Semantic Scholar (free tier) - quaternary source
     """
     
     # Standard headers to avoid 403 errors
@@ -251,6 +410,48 @@ class LiteratureSearcher:
         self.max_results = max_results
         self.timeout = timeout
     
+    # Common abbreviations for search queries
+    SEARCH_ALIASES = {
+        'trinitrotoluene': 'TNT',
+        '2,4,6-trinitrotoluene': 'TNT',
+        'cyclotrimethylenetrinitramine': 'RDX',
+        'cyclotetramethylenetetranitramine': 'HMX',
+        'triaminotrinitrobenzene': 'TATB',
+        'pentaerythritol tetranitrate': 'PETN',
+        'hexanitrohexaazaisowurtzitane': 'CL-20',
+        '1,1-diamino-2,2-dinitroethylene': 'FOX-7',
+        'dinitrotoluene': 'DNT',
+        '2,4-dinitrotoluene': 'DNT',
+        'trinitroazetidine': 'TNAZ',
+        '3-nitro-1,2,4-triazol-5-one': 'NTO',
+        'dinitroanisole': 'DNAN',
+        '2,4-dinitroanisole': 'DNAN',
+        'hexanitrostilbene': 'HNS',
+        'trinitrophenol': 'picric acid',
+        '2,4,6-trinitrophenol': 'picric acid',
+        'trinitrophenylmethylnitramine': 'tetryl',
+    }
+    
+    def _get_search_terms(self, chemical_name: str) -> str:
+        """
+        Get search terms including common abbreviations.
+        
+        Args:
+            chemical_name: Chemical name
+            
+        Returns:
+            Search string with name and abbreviation if known
+        """
+        name_lower = chemical_name.lower()
+        
+        # Check if we have a common abbreviation
+        for full_name, abbrev in self.SEARCH_ALIASES.items():
+            if full_name in name_lower or name_lower in full_name:
+                # Return both name and abbreviation for better search
+                return f'("{abbrev}" OR "{chemical_name}")'
+        
+        return f'"{chemical_name}"'
+    
     def search(self, chemical_name: str, smiles: str = None) -> List[Dict]:
         """
         Search multiple databases for papers mentioning the chemical.
@@ -264,20 +465,29 @@ class LiteratureSearcher:
         """
         papers = []
         
-        # 1. Try OpenAlex first (most reliable, no auth needed)
-        openalex_papers = self._search_openalex(chemical_name)
-        papers.extend(openalex_papers)
-        logger.info(f"OpenAlex found {len(openalex_papers)} papers for '{chemical_name}'")
+        # Get search terms (including abbreviations)
+        search_term = self._get_search_terms(chemical_name)
         
-        # 2. Try Crossref for additional coverage
+        # 1. Try ArXiv FIRST - has full text PDFs!
+        arxiv_papers = self._search_arxiv(chemical_name, search_term)
+        papers.extend(arxiv_papers)
+        logger.info(f"ArXiv found {len(arxiv_papers)} papers with full text for '{chemical_name}'")
+        
+        # 2. Try OpenAlex for additional coverage (abstracts only)
         if len(papers) < self.max_results:
-            crossref_papers = self._search_crossref(chemical_name)
+            openalex_papers = self._search_openalex(chemical_name, search_term)
+            papers.extend(openalex_papers)
+            logger.info(f"OpenAlex found {len(openalex_papers)} additional papers")
+        
+        # 3. Try Crossref for additional coverage
+        if len(papers) < self.max_results:
+            crossref_papers = self._search_crossref(chemical_name, search_term)
             papers.extend(crossref_papers)
             logger.info(f"Crossref found {len(crossref_papers)} additional papers")
         
-        # 3. Try Semantic Scholar as fallback
+        # 4. Try Semantic Scholar as fallback
         if len(papers) < self.max_results // 2:
-            semantic_papers = self._search_semantic_scholar(chemical_name)
+            semantic_papers = self._search_semantic_scholar(chemical_name, search_term)
             papers.extend(semantic_papers)
             logger.info(f"Semantic Scholar found {len(semantic_papers)} additional papers")
         
@@ -297,7 +507,7 @@ class LiteratureSearcher:
         logger.info(f"Total unique papers found: {len(unique_papers[:self.max_results])}")
         return unique_papers[:self.max_results]
     
-    def _search_openalex(self, chemical_name: str) -> List[Dict]:
+    def _search_openalex(self, chemical_name: str, search_term: str = None) -> List[Dict]:
         """
         Search OpenAlex for papers (free, no auth required).
         
@@ -307,7 +517,9 @@ class LiteratureSearcher:
         
         try:
             # OpenAlex API - search works
-            query = f'{chemical_name} energetic explosive detonation propellant'
+            # Use search_term if provided (includes abbreviations)
+            base_term = search_term if search_term else chemical_name
+            query = f'{base_term} energetic explosive detonation'
             url = "https://api.openalex.org/works"
             params = {
                 'search': query,
@@ -336,7 +548,7 @@ class LiteratureSearcher:
                     
                     paper = {
                         'title': item.get('title', ''),
-                        'abstract': abstract,
+                        'text': abstract,
                         'doi': item.get('doi', '').replace('https://doi.org/', '') if item.get('doi') else '',
                         'authors': authors,
                         'published_date': item.get('publication_date', ''),
@@ -374,12 +586,180 @@ class LiteratureSearcher:
         except Exception:
             return ''
     
-    def _search_crossref(self, chemical_name: str) -> List[Dict]:
+    def _download_arxiv_pdf(self, arxiv_id: str) -> Optional[str]:
+        """
+        Download ArXiv PDF and extract full text.
+        
+        Args:
+            arxiv_id: ArXiv paper ID (e.g., "2301.12345")
+            
+        Returns:
+            Full text content or None if failed
+        """
+        if not PDF_PARSER_AVAILABLE:
+            return None
+            
+        try:
+            # ArXiv PDF URL format
+            pdf_url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
+            
+            response = requests.get(pdf_url, headers=self.HEADERS, timeout=30)
+            
+            if response.status_code == 200:
+                # Save to temp file and parse
+                with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_file:
+                    tmp_file.write(response.content)
+                    tmp_path = tmp_file.name
+                
+                try:
+                    # Extract text using PyMuPDF
+                    doc = fitz.open(tmp_path)
+                    full_text = ""
+                    for page in doc:
+                        full_text += page.get_text()
+                    doc.close()
+                    
+                    # Clean up temp file
+                    os.unlink(tmp_path)
+                    
+                    return full_text
+                except Exception as e:
+                    logger.debug(f"PDF parsing error for {arxiv_id}: {e}")
+                    if os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
+                    return None
+            else:
+                logger.debug(f"Failed to download ArXiv PDF {arxiv_id}: status {response.status_code}")
+                return None
+                
+        except Exception as e:
+            logger.debug(f"ArXiv PDF download error for {arxiv_id}: {e}")
+            return None
+    
+    def _search_arxiv(self, chemical_name: str, search_term: str = None) -> List[Dict]:
+        """
+        Search ArXiv for papers and extract FULL TEXT from PDFs.
+        
+        ArXiv is a repository for physics, chemistry, and materials science preprints.
+        Uses the ArXiv API: https://arxiv.org/help/api/
+        Downloads full PDFs for text extraction (not just abstracts).
+        """
+        papers = []
+        
+        try:
+            # ArXiv API - search for papers
+            # Use abbreviation if available for better results
+            if search_term and 'OR' in search_term:
+                abbrev_match = re.search(r'"([^"]+)"', search_term)
+                base_term = abbrev_match.group(1) if abbrev_match else chemical_name
+            else:
+                base_term = chemical_name
+            
+            # Broader search - ArXiv doesn't have many energetics papers
+            # Try multiple queries: abbreviation, full name, and general energetic terms
+            query = f'all:{base_term} OR all:"{chemical_name}" OR (all:energetic AND all:material AND all:detonation)'
+            url = "http://export.arxiv.org/api/query"
+            params = {
+                'search_query': query,
+                'max_results': min(self.max_results, 10),  # Limit due to PDF downloads
+                'sortBy': 'relevance',
+                'sortOrder': 'descending',
+            }
+            
+            print(f"         🔍 ArXiv query: {base_term} (PDF parsing: {'✓' if PDF_PARSER_AVAILABLE else '✗'})...", end=" ", flush=True)
+            
+            response = requests.get(url, params=params, headers=self.HEADERS, timeout=self.timeout)
+            
+            if response.status_code == 200:
+                # Parse XML response (ArXiv uses Atom feed format)
+                import xml.etree.ElementTree as ET
+                
+                root = ET.fromstring(response.content)
+                
+                # Define namespaces used in ArXiv Atom feed
+                ns = {
+                    'atom': 'http://www.w3.org/2005/Atom',
+                    'arxiv': 'http://arxiv.org/schemas/atom'
+                }
+                
+                entries = root.findall('atom:entry', ns)
+                print(f"found {len(entries)} papers")
+                
+                for entry in entries:
+                    # Extract title
+                    title_elem = entry.find('atom:title', ns)
+                    title = title_elem.text.strip() if title_elem is not None and title_elem.text else ''
+                    
+                    # Extract abstract (as fallback)
+                    abstract_elem = entry.find('atom:summary', ns)
+                    abstract = abstract_elem.text.strip() if abstract_elem is not None and abstract_elem.text else ''
+                    
+                    # Extract authors
+                    authors = []
+                    for author_elem in entry.findall('atom:author', ns):
+                        name_elem = author_elem.find('atom:name', ns)
+                        if name_elem is not None and name_elem.text:
+                            authors.append(name_elem.text.strip())
+                    
+                    # Extract ArXiv ID
+                    id_elem = entry.find('atom:id', ns)
+                    arxiv_id = ''
+                    if id_elem is not None and id_elem.text:
+                        # ID format: http://arxiv.org/abs/XXXX.XXXXX or http://arxiv.org/abs/cond-mat/XXXXXXX
+                        arxiv_id = id_elem.text.replace('http://arxiv.org/abs/', '').replace('https://arxiv.org/abs/', '')
+                    
+                    # Extract published date
+                    published_elem = entry.find('atom:published', ns)
+                    published_date = published_elem.text[:10] if published_elem is not None and published_elem.text else ''
+                    
+                    # Try to get full text from PDF
+                    full_text = None
+                    if arxiv_id and PDF_PARSER_AVAILABLE:
+                        print(f"            📥 Downloading PDF: {arxiv_id}...", end=" ", flush=True)
+                        full_text = self._download_arxiv_pdf(arxiv_id)
+                        if full_text:
+                            print(f"✓ ({len(full_text)} chars)")
+                        else:
+                            print("✗ failed")
+                    elif not PDF_PARSER_AVAILABLE:
+                        print(f"            ⚠️ PyMuPDF not available (PDF_PARSER_AVAILABLE={PDF_PARSER_AVAILABLE})")
+                    elif not arxiv_id:
+                        print(f"            ⚠️ No ArXiv ID extracted - cannot download PDF")
+                    
+                    # Use full text if available, otherwise fall back to abstract
+                    content = full_text if full_text else abstract
+                    
+                    paper = {
+                        'title': title,
+                        'text': content,  # Full text from PDF, or abstract as fallback
+                        'doi': f'arXiv:{arxiv_id}' if arxiv_id else '',
+                        'authors': authors,
+                        'published_date': published_date,
+                        'source': 'ArXiv-FullText' if full_text else 'ArXiv',
+                        'has_full_text': full_text is not None
+                    }
+                    
+                    if paper['title'] and paper['text']:
+                        papers.append(paper)
+            else:
+                print(f"error (status {response.status_code})")
+                logger.warning(f"ArXiv API returned status {response.status_code}")
+                        
+        except requests.exceptions.Timeout:
+            print("timeout")
+            logger.warning(f"ArXiv API timeout for '{chemical_name}'")
+        except Exception as e:
+            logger.warning(f"ArXiv API error: {e}")
+        
+        return papers
+    
+    def _search_crossref(self, chemical_name: str, search_term: str = None) -> List[Dict]:
         """Search Crossref for papers (free with polite pool)."""
         papers = []
         
         try:
-            query = f'{chemical_name} energetic explosive detonation'
+            base_term = search_term.replace('"', '').replace('(', '').replace(')', '') if search_term else chemical_name
+            query = f'{base_term} energetic explosive detonation'
             url = "https://api.crossref.org/works"
             params = {
                 'query': query,
@@ -401,7 +781,7 @@ class LiteratureSearcher:
                     
                     paper = {
                         'title': item.get('title', [''])[0] if item.get('title') else '',
-                        'abstract': abstract,
+                        'text': abstract,
                         'doi': item.get('DOI', ''),
                         'authors': [f"{a.get('given', '')} {a.get('family', '')}" 
                                    for a in item.get('author', [])],
@@ -420,12 +800,13 @@ class LiteratureSearcher:
         
         return papers
     
-    def _search_semantic_scholar(self, chemical_name: str) -> List[Dict]:
+    def _search_semantic_scholar(self, chemical_name: str, search_term: str = None) -> List[Dict]:
         """Search Semantic Scholar for papers (free tier)."""
         papers = []
         
         try:
-            query = f'{chemical_name} energetic material'
+            base_term = search_term.replace('"', '').replace('(', '').replace(')', '') if search_term else chemical_name
+            query = f'{base_term} energetic material'
             url = "https://api.semanticscholar.org/graph/v1/paper/search"
             params = {
                 'query': query,
@@ -446,13 +827,13 @@ class LiteratureSearcher:
                     
                     paper = {
                         'title': item.get('title', ''),
-                        'abstract': item.get('abstract', '') or '',
+                        'text': item.get('abstract', '') or '',
                         'doi': doi,
                         'authors': [a.get('name', '') for a in (item.get('authors') or [])],
                         'published_date': item.get('publicationDate', ''),
                         'source': 'SemanticScholar'
                     }
-                    if paper['title'] and paper['abstract']:
+                    if paper['title'] and paper['text']:
                         papers.append(paper)
             else:
                 logger.debug(f"Semantic Scholar API returned status {response.status_code}")
@@ -467,32 +848,69 @@ class LiteratureSearcher:
 
 class PropertyExtractor:
     """
-    Extracts energetic material properties from paper abstracts.
+    Extracts energetic material properties from paper text (abstracts or full text).
     
     Uses regex patterns and optionally LLM for more complex extraction.
+    For full-text papers (e.g. ArXiv), uses embedding-based chunk retrieval.
     """
     
-    # Property patterns with units
+    # Common aliases/abbreviations for energetic materials
+    # Maps canonical name patterns to list of common names/abbreviations
+    ENERGETIC_ALIASES = {
+        'trinitrotoluene': ['tnt', '2,4,6-tnt', 'trinitrotoluene'],
+        'rdx': ['rdx', 'cyclotrimethylenetrinitramine', 'hexogen', 'cyclonite', 'hexahydro-1,3,5-trinitro-1,3,5-triazine'],
+        'hmx': ['hmx', 'cyclotetramethylenetetranitramine', 'octogen', 'octahydro-1,3,5,7-tetranitro-1,3,5,7-tetrazocine'],
+        'tatb': ['tatb', 'triaminotrinitrobenzene', '1,3,5-triamino-2,4,6-trinitrobenzene'],
+        'petn': ['petn', 'pentaerythritol tetranitrate', 'penthrite', 'nitropenta'],
+        'nitroglycerin': ['nitroglycerin', 'nitroglycerine', 'glyceryl trinitrate', 'ng', 'gtn'],
+        'picric acid': ['picric acid', 'trinitrophenol', '2,4,6-trinitrophenol', 'melinite', 'lyddite'],
+        'tetryl': ['tetryl', 'trinitrophenylmethylnitramine', 'tetryl', 'pyronite'],
+        'cl-20': ['cl-20', 'hexanitrohexaazaisowurtzitane', 'hniw', 'china lake 20'],
+        'fox-7': ['fox-7', 'dadne', '1,1-diamino-2,2-dinitroethylene', 'diaminodinitroethylene'],
+        'dnt': ['dnt', 'dinitrotoluene', '2,4-dinitrotoluene'],
+        'tnaz': ['tnaz', 'trinitroazetidine', '1,3,3-trinitroazetidine'],
+        'nto': ['nto', 'nitrotriazolone', '3-nitro-1,2,4-triazol-5-one', '5-nitro-2,4-dihydro-3h-1,2,4-triazol-3-one'],
+        'dnan': ['dnan', 'dinitroanisole', '2,4-dinitroanisole'],
+        'hns': ['hns', 'hexanitrostilbene', '2,2\',4,4\',6,6\'-hexanitrostilbene'],
+    }
+    
+    # Property patterns with units - FLEXIBLE patterns to catch various formats
     PROPERTY_PATTERNS = {
         'Density': [
-            # Density patterns: e.g., "density of 1.92 g/cm³", "ρ = 1.85 g cm⁻³"
-            r'(?:density|ρ|rho)\s*(?:of|=|:)?\s*(\d+\.?\d*)\s*(?:g\s*/?\s*cm[³3⁻-]*|g\s*cm\s*[-−]?\s*3)',
-            r'(\d+\.?\d*)\s*(?:g\s*/?\s*cm[³3⁻-]*|g\s*cm\s*[-−]?\s*3)\s*(?:density)',
+            # Standard: "density of 1.92 g/cm³", "ρ = 1.85 g cm⁻³"
+            r'(?:density|ρ|rho|crystal\s+density|calculated\s+density)\s*(?:of|=|:|is|was)?\s*(\d+\.?\d*)\s*(?:g\s*/?\s*cm|g\s*cm|gcc)',
+            r'(\d+\.?\d*)\s*(?:g\s*/?\s*cm|g/cm|gcc|g\s*cm)\s*.*?(?:density)',
+            # Just number followed by g/cm3 in context of density discussion
+            r'density[^.]{0,50}(\d+\.\d+)\s*(?:g|gcc)',
+            # Parenthetical: "(1.92 g/cm³)"
+            r'\(\s*(\d+\.\d+)\s*g\s*/?\s*cm',
         ],
         'Det Velocity': [
-            # Detonation velocity: e.g., "detonation velocity of 8500 m/s", "D = 9000 m s⁻¹"
-            r'(?:detonation\s+velocity|det\.?\s*vel\.?|D)\s*(?:of|=|:)?\s*(\d+\.?\d*)\s*(?:m\s*/?\s*s|m\s*s\s*[-−]?\s*1|km\s*/?\s*s)',
-            r'(\d+\.?\d*)\s*(?:m\s*/?\s*s|km\s*/?\s*s)\s*(?:detonation)',
+            # Standard: "detonation velocity of 8500 m/s", "explosion speed 8500 m/s"
+            r'(?:detonation\s+velocity|detonation\s+speed|explosion\s+velocity|explosion\s+speed|det\.?\s*vel\.?|vod|velocity\s+of\s+detonation)\s*(?:of|=|:|is|was)?\s*(\d+\.?\d*)\s*(?:m\s*/?\s*s|m/s|ms)',
+            r'(\d+\.?\d*)\s*(?:m\s*/?\s*s|m/s)\s*.*?(?:detonation|explosion|velocity|speed)',
+            # With km/s units
+            r'(?:detonation|explosion|velocity|speed)[^.]{0,30}(\d+\.?\d*)\s*(?:km\s*/?\s*s|km/s)',
+            # Just number + m/s near detonation/explosion context
+            r'(?:detonation|explosion)[^.]{0,50}(\d{4,5})\s*(?:m/s|m\s*/\s*s)',
         ],
         'Det Pressure': [
-            # Detonation pressure: e.g., "detonation pressure of 39.5 GPa", "P_CJ = 40 GPa"
-            r'(?:detonation\s+pressure|det\.?\s*press\.?|P\s*(?:CJ|det)?)\s*(?:of|=|:)?\s*(\d+\.?\d*)\s*(?:GPa|kbar)',
-            r'(\d+\.?\d*)\s*(?:GPa|kbar)\s*(?:detonation|pressure)',
+            # Standard: "detonation pressure of 39.5 GPa", "explosion pressure 39.5 GPa"
+            r'(?:detonation\s+pressure|explosion\s+pressure|det\.?\s*press\.?|pcj|p_cj|chapman.jouguet)\s*(?:of|=|:|is|was)?\s*(\d+\.?\d*)\s*(?:GPa|gpa)',
+            r'(\d+\.?\d*)\s*(?:GPa|gpa)\s*.*?(?:detonation|explosion|pressure|pcj)',
+            # kbar units
+            r'(?:detonation|explosion|pressure)[^.]{0,30}(\d+\.?\d*)\s*(?:kbar)',
+            # Just number + GPa near detonation/explosion context  
+            r'(?:detonation|explosion)[^.]{0,50}(\d+\.?\d*)\s*(?:GPa|gpa)',
         ],
-        'Hf solid': [
-            # Heat of formation: e.g., "heat of formation of 200 kJ/mol", "ΔHf = 150 kJ mol⁻¹"
-            r'(?:heat\s+of\s+formation|enthalpy\s+of\s+formation|[ΔΔ]?\s*H\s*f?)\s*(?:of|=|:)?\s*([-−]?\d+\.?\d*)\s*(?:kJ\s*/?\s*mol|kJ\s*mol\s*[-−]?\s*1|kcal\s*/?\s*mol)',
-            r'([-−]?\d+\.?\d*)\s*(?:kJ\s*/?\s*mol|kcal\s*/?\s*mol)\s*(?:heat|enthalpy|formation)',
+        'Heat of Formation': [
+            # Standard: "heat of formation of 200 kJ/mol", "enthalpy of formation -50 kJ/mol"
+            r'(?:heat\s+of\s+formation|enthalpy\s+of\s+formation|formation\s+enthalpy|hof|Δhf|ΔH)\s*(?:of|=|:|is|was)?\s*([-−+]?\d+\.?\d*)\s*(?:kJ|kj)',
+            r'([-−+]?\d+\.?\d*)\s*(?:kJ\s*/?\s*mol|kJ/mol|kj/mol)\s*.*?(?:heat|enthalpy|formation)',
+            # kcal/mol units
+            r'(?:heat|enthalpy|formation)[^.]{0,30}([-−+]?\d+\.?\d*)\s*(?:kcal)',
+            # Just number + kJ/mol near formation context
+            r'formation[^.]{0,50}([-−+]?\d+\.?\d*)\s*(?:kJ|kj)',
         ],
     }
     
@@ -503,24 +921,68 @@ class PropertyExtractor:
         'kcal/mol': 4.184,  # kcal/mol to kJ/mol
     }
     
-    def __init__(self, use_llm: bool = False, llm_api_key: str = None):
+    def __init__(self, use_llm: bool = False, llm_api_key: str = None, use_chunking: bool = True):
         """
         Initialize extractor.
         
         Args:
             use_llm: Whether to use LLM for complex extraction
             llm_api_key: OpenAI API key for LLM extraction
+            use_chunking: Whether to use embedding-based chunk retrieval
         """
         self.use_llm = use_llm
         self.llm_api_key = llm_api_key or os.getenv('OPENAI_API_KEY')
+        self.use_chunking = use_chunking
+        
+        # Initialize chunker and retriever for full-text processing
+        if use_chunking:
+            self.chunker = TextChunker(chunk_size=500, chunk_overlap=100)
+            self.retriever = ChunkRetriever()
     
-    def extract_from_abstract(self, abstract: str, chemical_name: str) -> Dict[str, Optional[RetrievedProperty]]:
+    def _get_name_variants(self, chemical_name: str) -> List[str]:
         """
-        Extract energetic properties from a paper abstract.
+        Get all name variants (aliases) for a chemical name.
         
         Args:
-            abstract: Paper abstract text
+            chemical_name: Chemical name to find variants for
+            
+        Returns:
+            List of name variants to search for
+        """
+        if not chemical_name:
+            return []
+        
+        name_lower = chemical_name.lower()
+        variants = [name_lower]
+        
+        # Check if this name matches any known energetic material aliases
+        for key, aliases in self.ENERGETIC_ALIASES.items():
+            # Check if the chemical name contains any alias
+            for alias in aliases:
+                if alias in name_lower or name_lower in alias:
+                    # Add all aliases for this compound
+                    variants.extend(aliases)
+                    break
+        
+        # Also add the base name without numbers/prefixes
+        # E.g., "2,4,6-trinitrotoluene" -> "trinitrotoluene"
+        base_name = re.sub(r'^[\d,\'-]+', '', name_lower).strip()
+        if base_name and base_name != name_lower:
+            variants.append(base_name)
+        
+        return list(set(variants))  # Remove duplicates
+    
+    def extract_from_text(self, text: str, chemical_name: str, is_full_text: bool = False) -> Dict[str, Optional[RetrievedProperty]]:
+        """
+        Extract energetic properties from paper text (abstract or full text).
+        
+        For full text, uses embedding-based chunk retrieval to find relevant sections,
+        then applies both regex and LLM extraction on the retrieved chunks.
+        
+        Args:
+            text: Paper text (abstract or full text)
             chemical_name: Name of the chemical to look for
+            is_full_text: Whether this is full text (triggers chunking)
             
         Returns:
             Dictionary mapping property names to RetrievedProperty or None
@@ -529,55 +991,185 @@ class PropertyExtractor:
             'Density': None,
             'Det Velocity': None,
             'Det Pressure': None,
-            'Hf solid': None
+            'Heat of Formation': None
         }
         
-        if not abstract:
+        if not text:
             return properties
         
-        # Normalize text
-        text = abstract.lower()
+        # Get all name variants (including common abbreviations like TNT, RDX, etc.)
+        name_variants = self._get_name_variants(chemical_name)
         
-        # Check if the chemical is mentioned
-        name_lower = chemical_name.lower() if chemical_name else ""
-        if name_lower and name_lower not in text:
-            # Chemical not mentioned in this abstract
+        # For full text, use chunking and retrieval
+        if is_full_text and self.use_chunking and len(text) > 2000:
+            properties = self._extract_from_chunks(text, chemical_name, name_variants)
+        else:
+            # For short text (abstracts), search directly with regex
+            properties = self._extract_from_text(text, chemical_name, name_variants)
+            
+            # Also try LLM on the short text
+            if self.use_llm and self.llm_api_key:
+                llm_properties = self._extract_with_llm(text, chemical_name)
+                for prop_name, prop_value in llm_properties.items():
+                    if prop_value is not None:
+                        current = properties.get(prop_name)
+                        if current is None or prop_value.confidence > current.confidence:
+                            properties[prop_name] = prop_value
+        
+        return properties
+    
+    def _extract_from_chunks(
+        self, 
+        full_text: str, 
+        chemical_name: str,
+        name_variants: List[str]
+    ) -> Dict[str, Optional[RetrievedProperty]]:
+        """
+        Extract properties from full text using chunk retrieval.
+        
+        Chunks the text, retrieves relevant chunks via embedding similarity,
+        then applies both regex and (optionally) LLM extraction on those chunks.
+        
+        Args:
+            full_text: Full paper text
+            chemical_name: Chemical name
+            name_variants: List of name variants to search for
+            
+        Returns:
+            Dictionary of extracted properties
+        """
+        properties = {
+            'Density': None,
+            'Det Velocity': None,
+            'Det Pressure': None,
+            'Heat of Formation': None
+        }
+        
+        # Chunk the text
+        chunks = self.chunker.chunk_text(full_text)
+        logger.debug(f"Split text into {len(chunks)} chunks")
+        
+        if not chunks:
+            return properties
+        
+        # Build query for retrieval — include chemical name + all property synonyms
+        abbreviation = name_variants[0] if name_variants else chemical_name
+        query = (
+            f"{abbreviation} {chemical_name} "
+            f"density "
+            f"detonation velocity detonation speed explosion velocity explosion speed "
+            f"detonation pressure explosion pressure "
+            f"heat of formation enthalpy of formation "
+            f"energetic explosive properties"
+        )
+        
+        # Retrieve most relevant chunks
+        relevant_chunks = self.retriever.retrieve_relevant_chunks(
+            chunks, 
+            query, 
+            top_k=10,
+            similarity_threshold=0.25
+        )
+        
+        logger.debug(f"Retrieved {len(relevant_chunks)} relevant chunks")
+        
+        # Extract properties from each relevant chunk using regex
+        for chunk, similarity in relevant_chunks:
+            chunk_properties = self._extract_from_text(chunk, chemical_name, name_variants)
+            
+            # Merge (keep highest confidence, boost by similarity)
+            for prop_name, prop_value in chunk_properties.items():
+                if prop_value is not None:
+                    # Boost confidence by chunk relevance
+                    boosted_confidence = prop_value.confidence * (0.5 + 0.5 * similarity)
+                    
+                    current = properties.get(prop_name)
+                    if current is None or boosted_confidence > current.confidence:
+                        properties[prop_name] = RetrievedProperty(
+                            value=prop_value.value,
+                            source=f"Chunk (sim={similarity:.2f})",
+                            confidence=boosted_confidence
+                        )
+        
+        # Apply LLM extraction on the relevant chunks (not raw full text)
+        if self.use_llm and self.llm_api_key and relevant_chunks:
+            # Concatenate the top relevant chunks for LLM context
+            llm_context = "\n\n".join(chunk for chunk, _ in relevant_chunks[:5])
+            llm_properties = self._extract_with_llm(llm_context, chemical_name)
+            
+            # Merge LLM results (higher confidence overrides regex)
+            for prop_name, prop_value in llm_properties.items():
+                if prop_value is not None:
+                    current = properties.get(prop_name)
+                    if current is None or prop_value.confidence > current.confidence:
+                        properties[prop_name] = prop_value
+        
+        return properties
+    
+    def _extract_from_text(
+        self, 
+        text: str, 
+        chemical_name: str,
+        name_variants: List[str]
+    ) -> Dict[str, Optional[RetrievedProperty]]:
+        """
+        Extract properties from text using regex patterns.
+        
+        Args:
+            text: Text to search
+            chemical_name: Chemical name  
+            name_variants: List of name variants
+            
+        Returns:
+            Dictionary of extracted properties
+        """
+        properties = {
+            'Density': None,
+            'Det Velocity': None,
+            'Det Pressure': None,
+            'Heat of Formation': None
+        }
+        
+        # Normalize text
+        text_lower = text.lower()
+        
+        # Check if any variant of the chemical name is mentioned
+        name_found = any(variant in text_lower for variant in name_variants)
+        
+        # Also check for generic energetic keywords as fallback
+        energetic_keywords = ['energetic', 'explosive', 'detonation', 'propellant', 'munition']
+        keyword_found = any(kw in text_lower for kw in energetic_keywords)
+        
+        # If neither name nor keywords found, skip
+        if not name_found and not keyword_found:
             return properties
         
         # Extract each property using regex
         for prop_name, patterns in self.PROPERTY_PATTERNS.items():
             for pattern in patterns:
-                matches = re.findall(pattern, text, re.IGNORECASE)
+                matches = re.findall(pattern, text_lower, re.IGNORECASE)
                 if matches:
                     try:
-                        value = float(matches[0].replace('−', '-'))
+                        value = float(matches[0].replace('−', '-').replace('–', '-'))
                         
                         # Apply unit conversions if needed
                         if 'km' in pattern and prop_name == 'Det Velocity':
                             value *= 1000  # km/s to m/s
                         elif 'kbar' in pattern and prop_name == 'Det Pressure':
                             value *= 0.1  # kbar to GPa
-                        elif 'kcal' in pattern and prop_name == 'Hf solid':
+                        elif 'kcal' in pattern and prop_name == 'Heat of Formation':
                             value *= 4.184  # kcal/mol to kJ/mol
                         
                         # Validate reasonable ranges
                         if self._validate_value(prop_name, value):
                             properties[prop_name] = RetrievedProperty(
                                 value=value,
-                                source=f"Extracted from abstract",
-                                confidence=0.7  # Regex extraction confidence
+                                source="Regex extraction",
+                                confidence=0.7
                             )
                             break
                     except (ValueError, IndexError):
                         continue
-        
-        # Optionally use LLM for more accurate extraction
-        if self.use_llm and self.llm_api_key:
-            llm_properties = self._extract_with_llm(abstract, chemical_name)
-            # Merge LLM results (higher confidence)
-            for prop_name, prop_value in llm_properties.items():
-                if prop_value is not None:
-                    properties[prop_name] = prop_value
         
         return properties
     
@@ -587,19 +1179,19 @@ class PropertyExtractor:
             'Density': (0.5, 3.0),  # g/cm³
             'Det Velocity': (4000, 12000),  # m/s
             'Det Pressure': (10, 60),  # GPa
-            'Hf solid': (-500, 1000),  # kJ/mol (can be negative)
+            'Heat of Formation': (-500, 1000),  # kJ/mol (can be negative)
         }
         
         min_val, max_val = ranges.get(prop_name, (float('-inf'), float('inf')))
         return min_val <= value <= max_val
     
-    def _extract_with_llm(self, abstract: str, chemical_name: str) -> Dict[str, Optional[RetrievedProperty]]:
-        """Use LLM to extract properties from abstract."""
+    def _extract_with_llm(self, text: str, chemical_name: str) -> Dict[str, Optional[RetrievedProperty]]:
+        """Use LLM to extract properties from text (retrieved chunks or abstract)."""
         properties = {
             'Density': None,
             'Det Velocity': None,
             'Det Pressure': None,
-            'Hf solid': None
+            'Heat of Formation': None
         }
         
         try:
@@ -607,16 +1199,22 @@ class PropertyExtractor:
             
             client = openai.OpenAI(api_key=self.llm_api_key)
             
-            prompt = f"""Extract energetic material properties for "{chemical_name}" from this abstract.
-            
-Abstract:
-{abstract}
+            prompt = f"""Extract energetic material properties for "{chemical_name}" from the following text.
+
+Text:
+{text}
+
+Search for these properties using any of the listed synonyms:
+- "density": crystal density, calculated density, ρ (in g/cm³)
+- "det_velocity": detonation velocity, detonation speed, explosion velocity, explosion speed, VOD (in m/s)
+- "det_pressure": detonation pressure, explosion pressure, Chapman-Jouguet pressure, PCJ (in GPa)
+- "heat_of_formation": heat of formation, enthalpy of formation, formation enthalpy, ΔHf (in kJ/mol)
 
 Return ONLY a JSON object with these exact keys (use null if not found):
 - "density": value in g/cm³
 - "det_velocity": value in m/s
 - "det_pressure": value in GPa
-- "hf_solid": value in kJ/mol
+- "heat_of_formation": value in kJ/mol
 
 JSON response:"""
 
@@ -638,7 +1236,7 @@ JSON response:"""
                     'density': 'Density',
                     'det_velocity': 'Det Velocity',
                     'det_pressure': 'Det Pressure',
-                    'hf_solid': 'Hf solid'
+                    'heat_of_formation': 'Heat of Formation'
                 }
                 
                 for json_key, prop_name in mapping.items():
@@ -646,7 +1244,7 @@ JSON response:"""
                     if value is not None and self._validate_value(prop_name, float(value)):
                         properties[prop_name] = RetrievedProperty(
                             value=float(value),
-                            source="LLM extraction from abstract",
+                            source="LLM extraction from retrieved text",
                             confidence=0.85
                         )
                         
@@ -724,7 +1322,7 @@ class RAGPropertyRetriever:
             'Density': None,
             'Det Velocity': None,
             'Det Pressure': None,
-            'Hf solid': None
+            'Heat of Formation': None
         }
         
         # Step 1: Convert SMILES to name
@@ -760,13 +1358,14 @@ class RAGPropertyRetriever:
         
         # Step 3: Extract properties from each paper
         for paper in papers:
-            abstract = paper.get('abstract', '')
+            text = paper.get('text', '')
             title = paper.get('title', '')
+            is_full_text = paper.get('has_full_text', False)
             
-            if not abstract:
+            if not text:
                 continue
             
-            extracted = self.extractor.extract_from_abstract(abstract, chemical_name)
+            extracted = self.extractor.extract_from_text(text, chemical_name, is_full_text=is_full_text)
             
             # Track which properties this paper contributed
             props_from_this_paper = []
@@ -858,7 +1457,7 @@ def get_properties_with_rag(smiles: str,
                 sources[prop_name] = f"literature ({prop_value.source})"
     
     # Get missing properties from ML predictor
-    missing_props = [p for p in ['Density', 'Det Velocity', 'Det Pressure', 'Hf solid'] 
+    missing_props = [p for p in ['Density', 'Det Velocity', 'Det Pressure', 'Heat of Formation'] 
                     if p not in properties]
     
     if missing_props and predictor is not None:
