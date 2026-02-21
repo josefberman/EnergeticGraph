@@ -24,6 +24,12 @@ pubchempy>=1.0.4
 requests>=2.31.0
 chemical-converters>=0.1.0  # SMILES2IUPAC neural network model for IUPAC name generation
 
+# PDF parsing for ArXiv full-text extraction
+pymupdf>=1.23.0  # Also known as 'fitz'
+
+# Embeddings for RAG chunk retrieval
+sentence-transformers>=2.2.0
+
 # Vector Database (using FAISS instead of ChromaDB for better stability)
 faiss-cpu>=1.7.4
 
