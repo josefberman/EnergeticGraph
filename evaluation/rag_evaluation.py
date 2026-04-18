@@ -90,7 +90,7 @@ GROUND_TRUTH_DATA = [
             "Density": 1.654,
             "Det Velocity": 6900,
             "Det Pressure": 21.0,
-            "Heat of Formation": -67.0
+            "Hf solid": -67.0
         },
         sources=["Klapötke, Chemistry of High-Energy Materials, 2017"]
     ),
@@ -101,7 +101,7 @@ GROUND_TRUTH_DATA = [
             "Density": 1.82,
             "Det Velocity": 8750,
             "Det Pressure": 34.7,
-            "Heat of Formation": 70.0
+            "Hf solid": 70.0
         },
         sources=["Meyer et al., Explosives, 7th ed., 2016"]
     ),
@@ -112,7 +112,7 @@ GROUND_TRUTH_DATA = [
             "Density": 1.91,
             "Det Velocity": 9100,
             "Det Pressure": 39.0,
-            "Heat of Formation": 75.0
+            "Hf solid": 75.0
         },
         sources=["Akhavan, Chemistry of Explosives, 2011"]
     ),
@@ -123,7 +123,7 @@ GROUND_TRUTH_DATA = [
             "Density": 1.93,
             "Det Velocity": 7760,
             "Det Pressure": 31.5,
-            "Heat of Formation": -154.0
+            "Hf solid": -154.0
         },
         sources=["Dobratz & Crawford, LLNL Explosives Handbook, 1985"]
     ),
@@ -134,7 +134,7 @@ GROUND_TRUTH_DATA = [
             "Density": 1.77,
             "Det Velocity": 8400,
             "Det Pressure": 33.5,
-            "Heat of Formation": -538.0
+            "Hf solid": -538.0
         },
         sources=["Fedoroff & Sheffield, Encyclopedia of Explosives, 1960-1983"]
     ),
@@ -145,7 +145,7 @@ GROUND_TRUTH_DATA = [
             "Density": 1.59,
             "Det Velocity": 7700,
             "Det Pressure": 25.3,
-            "Heat of Formation": -370.0
+            "Hf solid": -370.0
         },
         sources=["Urbanski, Chemistry and Technology of Explosives, 1964"]
     ),
@@ -156,7 +156,7 @@ GROUND_TRUTH_DATA = [
             "Density": 1.76,
             "Det Velocity": 7350,
             "Det Pressure": 26.5,
-            "Heat of Formation": -217.0
+            "Hf solid": -217.0
         },
         sources=["Meyer et al., Explosives, 7th ed., 2016"]
     ),
@@ -167,7 +167,7 @@ GROUND_TRUTH_DATA = [
             "Density": 1.73,
             "Det Velocity": 7570,
             "Det Pressure": 26.0,
-            "Heat of Formation": 4.7
+            "Hf solid": 4.7
         },
         sources=["Akhavan, Chemistry of Explosives, 2011"]
     ),
@@ -178,7 +178,7 @@ GROUND_TRUTH_DATA = [
             "Density": 2.04,
             "Det Velocity": 9400,
             "Det Pressure": 42.0,
-            "Heat of Formation": 377.0
+            "Hf solid": 377.0
         },
         sources=["Nielsen et al., Tetrahedron, 1998"]
     ),
@@ -189,7 +189,7 @@ GROUND_TRUTH_DATA = [
             "Density": 1.88,
             "Det Velocity": 8870,
             "Det Pressure": 34.0,
-            "Heat of Formation": -130.0
+            "Hf solid": -130.0
         },
         sources=["Latypov et al., Journal of Organic Chemistry, 1998"]
     ),
@@ -200,7 +200,7 @@ GROUND_TRUTH_DATA = [
             "Density": 1.52,
             "Det Velocity": 5900,
             "Det Pressure": 14.5,
-            "Heat of Formation": -66.0
+            "Hf solid": -66.0
         },
         sources=["Meyer et al., Explosives, 7th ed., 2016"]
     ),
@@ -211,7 +211,7 @@ GROUND_TRUTH_DATA = [
             "Density": 1.84,
             "Det Velocity": 8730,
             "Det Pressure": 34.5,
-            "Heat of Formation": 20.5
+            "Hf solid": 20.5
         },
         sources=["Archibald et al., J. Org. Chem., 1990"]
     ),
@@ -222,7 +222,7 @@ GROUND_TRUTH_DATA = [
             "Density": 1.93,
             "Det Velocity": 8200,
             "Det Pressure": 28.0,
-            "Heat of Formation": -101.0
+            "Hf solid": -101.0
         },
         sources=["Lee & Coburn, US Army ARDEC Report, 1988"]
     ),
@@ -233,7 +233,7 @@ GROUND_TRUTH_DATA = [
             "Density": 1.52,
             "Det Velocity": 6100,
             "Det Pressure": 15.0,
-            "Heat of Formation": -129.0
+            "Hf solid": -129.0
         },
         sources=["Davies & Provatas, DSTO-TR-1000, 2000"]
     ),
@@ -244,7 +244,7 @@ GROUND_TRUTH_DATA = [
             "Density": 1.74,
             "Det Velocity": 7000,
             "Det Pressure": 24.0,
-            "Heat of Formation": 78.0
+            "Hf solid": 78.0
         },
         sources=["Shipp, J. Org. Chem., 1964"]
     ),
@@ -255,7 +255,7 @@ GROUND_TRUTH_DATA = [
             "Density": 1.98,
             "Det Velocity": 10100,
             "Det Pressure": 50.0,
-            "Heat of Formation": 594.0
+            "Hf solid": 594.0
         },
         sources=["Eaton et al., Propellants Explos. Pyrotech., 2002"]
     ),
@@ -266,7 +266,7 @@ GROUND_TRUTH_DATA = [
             "Density": 1.86,
             "Det Velocity": 8490,
             "Det Pressure": 33.0,
-            "Heat of Formation": 601.0
+            "Hf solid": 601.0
         },
         sources=["Bailey & Case, Tetrahedron, 1958"]
     ),
@@ -277,7 +277,7 @@ GROUND_TRUTH_DATA = [
             "Density": 1.76,
             "Det Velocity": 7300,
             "Det Pressure": 25.5,
-            "Heat of Formation": -68.0
+            "Hf solid": -68.0
         },
         sources=["Meyer et al., Explosives, 7th ed., 2016"]
     ),
@@ -288,7 +288,7 @@ GROUND_TRUTH_DATA = [
             "Density": 1.91,
             "Det Velocity": 8560,
             "Det Pressure": 34.0,
-            "Heat of Formation": -21.0
+            "Hf solid": -21.0
         },
         sources=["Pagoria et al., Thermochimica Acta, 2002"]
     ),
@@ -299,7 +299,7 @@ GROUND_TRUTH_DATA = [
             "Density": 1.94,
             "Det Velocity": 9000,
             "Det Pressure": 38.0,
-            "Heat of Formation": 312.0
+            "Hf solid": 312.0
         },
         sources=["Sheremetev et al., J. Org. Chem., 2004"]
     ),
@@ -310,7 +310,7 @@ GROUND_TRUTH_DATA = [
             "Density": 1.87,
             "Det Velocity": 9700,
             "Det Pressure": 42.4,
-            "Heat of Formation": 446.6
+            "Hf solid": 446.6
         },
         sources=["Fischer et al., J. Mater. Chem., 2012"]
     ),
@@ -321,7 +321,7 @@ GROUND_TRUTH_DATA = [
             "Density": 1.86,
             "Det Velocity": 8560,
             "Det Pressure": 33.0,
-            "Heat of Formation": -134.0
+            "Hf solid": -134.0
         },
         sources=["Zhang et al., J. Am. Chem. Soc., 2015"]
     ),
@@ -332,7 +332,7 @@ GROUND_TRUTH_DATA = [
             "Density": 1.99,
             "Det Velocity": 8420,
             "Det Pressure": 33.0,
-            "Heat of Formation": -370.0
+            "Hf solid": -370.0
         },
         sources=["Cady, LANL Report, 1979"]
     ),
@@ -343,7 +343,7 @@ GROUND_TRUTH_DATA = [
             "Density": 1.67,
             "Det Velocity": 7300,
             "Det Pressure": 23.5,
-            "Heat of Formation": -688.0
+            "Hf solid": -688.0
         },
         sources=["Urbanski, Chemistry and Technology of Explosives, 1964"]
     ),
@@ -354,7 +354,7 @@ GROUND_TRUTH_DATA = [
             "Density": 1.71,
             "Det Velocity": 7570,
             "Det Pressure": 25.4,
-            "Heat of Formation": -101.0
+            "Hf solid": -101.0
         },
         sources=["Fedoroff & Sheffield, Encyclopedia of Explosives, 1960-1983"]
     ),
@@ -365,7 +365,7 @@ GROUND_TRUTH_DATA = [
             "Density": 1.77,
             "Det Velocity": 8200,
             "Det Pressure": 29.0,
-            "Heat of Formation": -92.0
+            "Hf solid": -92.0
         },
         sources=["Meyer et al., Explosives, 7th ed., 2016"]
     ),
@@ -376,7 +376,7 @@ GROUND_TRUTH_DATA = [
             "Density": 1.95,
             "Det Velocity": 6300,
             "Det Pressure": 17.0,
-            "Heat of Formation": -296.0
+            "Hf solid": -296.0
         },
         sources=["Klapötke, Chemistry of High-Energy Materials, 2017"]
     ),
@@ -387,7 +387,7 @@ GROUND_TRUTH_DATA = [
             "Density": 4.80,
             "Det Velocity": 5180,
             "Det Pressure": 33.4,
-            "Heat of Formation": 468.0
+            "Hf solid": 468.0
         },
         sources=["Meyer et al., Explosives, 7th ed., 2016"]
     ),
@@ -398,7 +398,7 @@ GROUND_TRUTH_DATA = [
             "Density": 4.42,
             "Det Velocity": 4250,
             "Det Pressure": 17.0,
-            "Heat of Formation": 270.0
+            "Hf solid": 270.0
         },
         sources=["Urbanski, Chemistry and Technology of Explosives, 1964"]
     ),
@@ -622,7 +622,7 @@ def evaluate_material(
         'Density': None,
         'Det Velocity': None, 
         'Det Pressure': None,
-        'Heat of Formation': None
+        'Hf solid': None
     }
     
     for paper_relevance, extracted in paper_results:
@@ -802,7 +802,7 @@ def run_evaluation(output_dir: str = "evaluation/results", num_papers: int = 10)
     avg_relevance_rate = total_relevant / total_papers if total_papers > 0 else 0
     
     # Property extraction statistics
-    props_found_count = {prop: 0 for prop in ['Density', 'Det Velocity', 'Det Pressure', 'Heat of Formation']}
+    props_found_count = {prop: 0 for prop in ['Density', 'Det Velocity', 'Det Pressure', 'Hf solid']}
     for r in results:
         for prop, val in r.properties_found.items():
             if val is not None:

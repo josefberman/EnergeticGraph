@@ -1,201 +1,213 @@
 """
 Beam Search Orchestrator - manages the beam search algorithm.
+
+Owns the heavy shared components (PropertyPredictor, RAGPropertyRetriever)
+so we instantiate them ONCE per run, not once per ChemistAgent per iteration.
 """
 
 import logging
-from typing import List
+from typing import Callable, List, Optional
+
 from data_structures import MoleculeState, PropertyTarget
 from agents.worker_agent import ChemistAgent
 from config import Config
+from modules.prediction import PropertyPredictor
+from modules.rag_retrieval import RAGPropertyRetriever
 
 logger = logging.getLogger(__name__)
 
 
 class BeamSearchEngine:
-    """
-    Orchestrates the beam search optimization process.
-    """
-    
+    """Orchestrates the beam search optimization process."""
+
     def __init__(self, config: Config, target_properties: PropertyTarget):
-        """
-        Initialize beam search engine.
-        
-        Args:
-            config: System configuration
-            target_properties: Target molecular properties
-        """
         self.config = config
         self.target = target_properties
         self.beam_config = config.beam_search
-        
-        # History tracking
-        self.history = []
-        self.best_ever = None
-    
+
+        self.history: List[List[MoleculeState]] = []
+        self.best_ever: Optional[MoleculeState] = None
+
+        # Shared heavy components — built once per run.
+        self.predictor = PropertyPredictor(config.system.models_directory)
+
+        self.rag_retriever: Optional[RAGPropertyRetriever] = None
+        if config.rag.enable_rag:
+            self.rag_retriever = RAGPropertyRetriever(
+                use_llm=config.rag.use_llm,
+                max_papers=config.rag.max_papers,
+                timeout=config.rag.timeout,
+                openai_api_key=config.rag.openai_api_key,
+                cache_path=config.rag.cache_path,
+            )
+            logger.info("BeamSearchEngine: shared RAG retriever initialized")
+
+        # Optional observer hooks for GUI / external callers.
+        # Signature: on_iteration(iteration, all_candidates, beam)
+        self.on_seed: Optional[Callable[[MoleculeState], None]] = None
+        self.on_iteration: Optional[Callable[[int, List[MoleculeState], List[MoleculeState]], None]] = None
+        self.on_best: Optional[Callable[[MoleculeState], None]] = None
+        self.on_status: Optional[Callable[[str], None]] = None
+        self.on_complete: Optional[Callable[[MoleculeState], None]] = None
+
+        # Early-stop support.
+        self._stop_requested = False
+
+    def request_stop(self) -> None:
+        """Thread-safe-ish early-stop signal, checked between iterations."""
+        self._stop_requested = True
+
+    def _status(self, msg: str) -> None:
+        if self.on_status is not None:
+            try:
+                self.on_status(msg)
+            except Exception as e:
+                logger.warning(f"on_status callback failed: {e}")
+
     def calculate_mape(self, molecule: MoleculeState) -> float:
-        """
-        Calculate Mean Absolute Percentage Error relative to target values.
-        
-        Args:
-            molecule: Molecule to evaluate
-            
-        Returns:
-            MAPE as percentage (lower is better)
-        """
+        """MAPE (%) across the four target properties. Lower is better."""
         target_dict = self.target.to_dict()
         props = molecule.properties
-        
+
         errors = []
         for key in ['Density', 'Det Velocity', 'Det Pressure', 'Hf solid']:
             if key in target_dict and key in props:
                 target_val = abs(target_dict[key])
                 if target_val > 0:
-                    error_pct = abs(props[key] - target_dict[key]) / target_val * 100
-                    errors.append(error_pct)
-        
+                    errors.append(abs(props[key] - target_dict[key]) / target_val * 100)
+
         return sum(errors) / len(errors) if errors else 100.0
-    
+
     def run(self, seed_molecule: MoleculeState) -> MoleculeState:
-        """
-        Run beam search algorithm.
-        
-        Args:
-            seed_molecule: Initial seed molecule
-            
-        Returns:
-            Best molecule found
-        """
+        """Run beam search and return the best molecule found."""
         current_beam = [seed_molecule]
         self.best_ever = seed_molecule
-        
-        # Print seed info
+        prev_best_mape = self.calculate_mape(seed_molecule)
+
         print()
         print(f"   🌱 Seed Molecule: {seed_molecule.smiles[:50]}{'...' if len(seed_molecule.smiles) > 50 else ''}")
-        print(f"      Initial Score: {seed_molecule.score:.4f}")
+        print(f"      Initial MAPE: {prev_best_mape:.2f}%")
         print()
-        
+
         logger.info(f"Starting beam search with seed: {seed_molecule.smiles}")
-        
+        if self.on_seed is not None:
+            try:
+                self.on_seed(seed_molecule)
+            except Exception as e:
+                logger.warning(f"on_seed callback failed: {e}")
+
         for iteration in range(self.beam_config.max_iterations):
-            # Print iteration header
+            if self._stop_requested:
+                self._status("Stop requested; exiting beam search.")
+                break
+
             print()
+            header = f"ITERATION {iteration + 1}/{self.beam_config.max_iterations}"
             print(f"┌{'─' * 58}┐")
-            print(f"│  📍 ITERATION {iteration + 1}/{self.beam_config.max_iterations}" + " " * (43 - len(str(iteration + 1)) - len(str(self.beam_config.max_iterations))) + "│")
+            print(f"│  📍 {header}" + " " * max(0, 58 - 5 - len(header)) + "│")
             print(f"└{'─' * 58}┘")
-            
-            # Generate candidates from current beam
-            all_candidates = []
-            
+            self._status(f"Iteration {iteration + 1}/{self.beam_config.max_iterations}")
+
+            all_candidates: List[MoleculeState] = []
+
             for idx, parent_mol in enumerate(current_beam):
-                print(f"\n   🔬 Processing Parent {idx + 1}/{len(current_beam)}:")
-                print(f"      SMILES: {parent_mol.smiles[:45]}{'...' if len(parent_mol.smiles) > 45 else ''}")
-                print(f"      Score:  {parent_mol.score:.4f}")
-                print()
-                
-                # Create worker agent for this parent
-                agent = ChemistAgent(parent_mol, self.target, self.config)
-                
-                # Generate variations
+                print(f"\n   🔬 Parent {idx + 1}/{len(current_beam)}: "
+                      f"{parent_mol.smiles[:45]}{'...' if len(parent_mol.smiles) > 45 else ''}")
+
+                agent = ChemistAgent(
+                    parent_mol,
+                    self.target,
+                    self.config,
+                    predictor=self.predictor,
+                    rag_retriever=self.rag_retriever,
+                )
                 new_candidates = agent.generate_variations()
                 all_candidates.extend(new_candidates)
-                
-                print(f"\n      ✓ Generated {len(new_candidates)} candidate variations")
-            
-            # Stats
-            print(f"\n   📈 Iteration Statistics:")
-            print(f"      • Total candidates:    {len(all_candidates)}")
-            
-            # Filter feasible candidates
-            feasible_candidates = [m for m in all_candidates if m.is_feasible]
-            print(f"      • Feasible candidates: {len(feasible_candidates)}")
-            
-            if not feasible_candidates:
-                print(f"\n   ⚠️  No feasible candidates found. Stopping search.")
+                print(f"      ✓ {len(new_candidates)} candidates generated")
+
+            print(f"\n   📈 Iteration stats: total={len(all_candidates)}", end='')
+            feasible = [m for m in all_candidates if m.is_feasible]
+            print(f", feasible={len(feasible)}", end='')
+
+            if not feasible:
+                print("\n   ⚠️  No feasible candidates. Stopping.")
                 break
-            
-            # Remove duplicates (by SMILES)
-            unique_candidates = self._remove_duplicates(feasible_candidates)
-            print(f"      • Unique candidates:   {len(unique_candidates)}")
-            
-            # Rank by MAPE (lower is better) instead of combined score
-            ranked_candidates = sorted(unique_candidates, key=lambda x: self.calculate_mape(x))
-            
-            # Prune to top_k
-            next_beam = ranked_candidates[:self.beam_config.top_k]
-            
-            # Log iteration results
+
+            unique = self._remove_duplicates(feasible)
+            print(f", unique={len(unique)}")
+
+            ranked = sorted(unique, key=self.calculate_mape)
+            next_beam = ranked[:self.beam_config.top_k]
+
             self.log_iteration(iteration + 1, next_beam)
-            
-            # Update best ever by MAPE comparison
+
             best_mape = self.calculate_mape(next_beam[0])
             best_ever_mape = self.calculate_mape(self.best_ever)
             if best_mape < best_ever_mape:
                 self.best_ever = next_beam[0]
-                print(f"\n   🌟 NEW BEST FOUND!")
-                print(f"      SMILES: {self.best_ever.smiles[:45]}{'...' if len(self.best_ever.smiles) > 45 else ''}")
-                print(f"      MAPE:   {best_mape:.2f}%")
-            
-            # Check convergence
-            if iteration > 0:
-                prev_best_score = current_beam[0].score
-                curr_best_score = next_beam[0].score
-                improvement = prev_best_score - curr_best_score
-                
-                print(f"\n   📉 Score Improvement: {improvement:.6f}")
-                
-                if improvement < self.beam_config.convergence_threshold:
-                    print(f"\n   ✅ Converged! (improvement < {self.beam_config.convergence_threshold})")
-                    break
-            
-            # Update beam
+                print(f"\n   🌟 NEW BEST: MAPE {best_mape:.2f}%  "
+                      f"{self.best_ever.smiles[:45]}{'...' if len(self.best_ever.smiles) > 45 else ''}")
+                if self.on_best is not None:
+                    try:
+                        self.on_best(self.best_ever)
+                    except Exception as e:
+                        logger.warning(f"on_best callback failed: {e}")
+
+            # MAPE-to-MAPE convergence check (fixes the old score-vs-MAPE mix).
+            improvement = prev_best_mape - best_mape
+            print(f"\n   📉 MAPE improvement: {improvement:+.3f}% "
+                  f"(prev {prev_best_mape:.2f}% → now {best_mape:.2f}%)")
+            if iteration > 0 and improvement < self.beam_config.convergence_threshold:
+                print(f"\n   ✅ Converged (improvement < {self.beam_config.convergence_threshold}%).")
+                # Still report this iteration before breaking.
+                self._fire_iteration(iteration + 1, all_candidates, next_beam)
+                break
+            prev_best_mape = best_mape
+
             current_beam = next_beam
             self.history.append(current_beam)
-        
-        # Final summary
+            self._fire_iteration(iteration + 1, all_candidates, next_beam)
+
         print()
         print(f"┌{'─' * 58}┐")
         print(f"│  ✅ BEAM SEARCH COMPLETE" + " " * 33 + "│")
         print(f"└{'─' * 58}┘")
         print()
-        
+
         logger.info(f"Beam search complete. Best: {self.best_ever.smiles}")
-        
+        if self.on_complete is not None:
+            try:
+                self.on_complete(self.best_ever)
+            except Exception as e:
+                logger.warning(f"on_complete callback failed: {e}")
+
         return self.best_ever
-    
+
+    def _fire_iteration(self, iteration: int,
+                        all_candidates: List[MoleculeState],
+                        beam: List[MoleculeState]) -> None:
+        if self.on_iteration is None:
+            return
+        try:
+            self.on_iteration(iteration, all_candidates, beam)
+        except Exception as e:
+            logger.warning(f"on_iteration callback failed: {e}")
+
     def _remove_duplicates(self, molecules: List[MoleculeState]) -> List[MoleculeState]:
-        """Remove duplicate molecules by SMILES."""
         seen = set()
         unique = []
-        
         for mol in molecules:
             if mol.smiles not in seen:
                 seen.add(mol.smiles)
                 unique.append(mol)
-        
         return unique
-    
-    def log_iteration(self, iteration: int, beam: List[MoleculeState]):
-        """
-        Log iteration results.
-        
-        Args:
-            iteration: Iteration number
-            beam: Current beam
-        """
-        print(f"\n   🏅 Top {min(3, len(beam))} Candidates This Iteration:")
-        print()
-        
-        for i, mol in enumerate(beam[:3]):  # Show top 3
+
+    def log_iteration(self, iteration: int, beam: List[MoleculeState]) -> None:
+        print(f"\n   🏅 Top {min(3, len(beam))} this iteration:")
+        for i, mol in enumerate(beam[:3]):
             mape = self.calculate_mape(mol)
             feasibility_pct = (1 - mol.feasibility) * 100
-            
             medal = ["🥇", "🥈", "🥉"][i] if i < 3 else f"#{i+1}"
-            
-            print(f"      {medal} Rank {i+1}:")
-            print(f"         SMILES:      {mol.smiles[:40]}{'...' if len(mol.smiles) > 40 else ''}")
-            print(f"         Score:       {mol.score:.4f}")
-            print(f"         MAPE:        {mape:.1f}%")
-            print(f"         Feasibility: {feasibility_pct:.0f}%")
-            print()
-        
+            print(f"      {medal} #{i+1}: MAPE {mape:.1f}%  feas {feasibility_pct:.0f}%  "
+                  f"{mol.smiles[:40]}{'...' if len(mol.smiles) > 40 else ''}")
         logger.debug(f"Iteration {iteration}: beam size = {len(beam)}")

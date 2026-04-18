@@ -1,34 +1,38 @@
-# Beam Search Molecular Design System
+# Energetic Molecular Design System (EMDS)
 
-A modular system for designing energetic molecules using beam search optimization with RAG-enhanced modification strategies.
+A beam-search-based molecular designer for energetic materials. Targets four properties simultaneously (density, detonation velocity, detonation pressure, solid-phase heat of formation), uses a curated pool of 81 SMARTS-driven modification strategies, and augments XGBoost property prediction with retrieval from the scientific literature (OpenAlex, ArXiv, Crossref, Semantic Scholar).
 
 ## Features
 
-- **Beam Search Optimization**: Efficient exploration of chemical space
-- **Property Prediction**: XGBoost models for Density, Detonation Velocity/Pressure, and Formation Enthalpy
-- **Feasibility Checking**: SAScore-based synthetic accessibility
-- **RAG-Powered Modifications**: LangChain + Arxiv integration for literature-informed molecular design
-- **Modular Architecture**: Clean separation of concerns (prediction, modification, scoring, orchestration)
+- **Beam-search optimization** over a principled strategy pool (3⁴ = 81 direction tuples mapped by L1-nearest Δ to a validated library of ~35 SMARTS primitives).
+- **Property prediction** via XGBoost models for Density, Det. Velocity, Det. Pressure, and Hf solid.
+- **Feasibility filter** using SAScore.
+- **Retrieval-Augmented Generation (RAG)**: full-text ArXiv PDFs + abstract databases, with embedding-based chunk retrieval, regex+LLM extraction, and a persistent SQLite cache.
+- **GUI**: clean, light Flask web interface with Server-Sent Event progress streaming.
 
 ## Architecture
 
 ```
-beam_search_system/
-├── config.py                # Configuration classes
-├── data_structures.py       # MoleculeState and PropertyTarget
-├── descriptors.py           # Molecular descriptor generation
+EnergeticGraph/
+├── config.py                  # Configuration dataclasses
+├── data_structures.py         # MoleculeState, PropertyTarget
+├── descriptors.py             # Molecular descriptor generation
+├── designer.py                # High-level EnergeticDesigner entry
+├── main.py                    # CLI entry point
+├── orchestrator.py            # BeamSearchEngine with observer callbacks
+├── agents/worker_agent.py     # ChemistAgent (accepts shared predictor/retriever)
 ├── modules/
-│   ├── initialization.py    # Dataset loader and seeder
-│   ├── prediction.py        # XGBoost property prediction
-│   ├── feasibility.py       # SAScore and valency checking
-│   ├── scoring.py           # MAE + feasibility scoring
-│   ├── modification_tools.py # Chemical modifications
-│   └── rag_strategy.py      # RAG-based strategies
-├── agents/
-│   └── worker_agent.py      # ChemistAgent
-├── orchestrator.py          # Beam Search Engine
-├── designer.py              # Main EnergeticDesigner class
-└── main.py                  # CLI entry point
+│   ├── initialization.py      # Dataset loader and seed chooser
+│   ├── prediction.py          # XGBoost property prediction
+│   ├── feasibility.py         # SAScore + valency checks
+│   ├── scoring.py             # MAPE + feasibility combined score
+│   ├── modification_tools.py  # Generic chemical transformations
+│   ├── strategy_pool.py       # 81-tuple SMARTS strategies (validated)
+│   ├── rag_retrieval.py       # RAG: name resolution, search, extraction
+│   └── rag_cache.py           # SQLite cache for RAG results
+├── evaluation/
+│   └── rag_evaluation.py      # Precision@K / Recall@K for RAG
+└── gui/                       # Flask + SSE web UI
 ```
 
 ## Installation
@@ -37,97 +41,70 @@ beam_search_system/
 pip install -r requirements.txt
 ```
 
-## Usage
+Create a `.env` file (ignored by git) if you want LLM-based property extraction:
 
-### Basic Example
-
-```python
-from beam_search_system.data_structures import PropertyTarget
-from beam_search_system.config import Config
-from beam_search_system.designer import EnergeticDesigner
-
-# Define target properties
-target = PropertyTarget(
-    density=1.8,          # g/cm³
-    det_velocity=8500.0,  # m/s
-    det_pressure=35.0,    # GPa
-    hf_solid=-50.0        # kJ/mol
-)
-
-# Create config
-config = Config()
-config.rag.enable_rag = True
-config.rag.openai_api_key = "your-api-key"
-
-# Initialize and run
-designer = EnergeticDesigner(target, config)
-designer.initialize()
-best_molecule = designer.run_design_loop()
-
-print(f"Best SMILES: {best_molecule.smiles}")
-print(f"Score: {best_molecule.score:.4f}")
+```
+OPENAI_API_KEY=sk-...
 ```
 
-### Command Line
+LLM extraction is skipped gracefully when this key is absent.
+
+## CLI usage
 
 ```bash
-python beam_search_system/main.py \
+python main.py \
   --density 1.8 \
   --velocity 8500 \
   --pressure 35 \
   --hf -50 \
-  --enable-rag \
-  --openai-key YOUR_API_KEY \
   --max-iter 10 \
-  --output results.json
+  --output ./output/results.json
 ```
 
-## Configuration
+Add `--disable-rag` to skip literature retrieval (fast path, prediction-only).
 
-### Beam Search Parameters
+## Python usage
 
-- `beam_width`: Number of candidates in beam (default: 10)
-- `top_k`: Top candidates to keep per iteration (default: 5)
-- `max_iterations`: Maximum search iterations (default: 20)
-- `convergence_threshold`: Stop if improvement < threshold (default: 0.01)
+```python
+from data_structures import PropertyTarget
+from config import Config
+from designer import EnergeticDesigner
 
-### RAG Parameters
+target = PropertyTarget(density=1.8, det_velocity=8500, det_pressure=35, hf_solid=-50)
 
-- `enable_rag`: Enable/disable RAG (default: True)
-- `arxiv_max_results`: Max papers per query (default: 5)
-- `openai_api_key`: Your OpenAI API key
-- `chroma_persist_directory`: ChromaDB storage path
+config = Config()
+config.rag.enable_rag = True
+# Optional tuning:
+# config.rag.cache_path = "./output/rag_cache.sqlite"
+# config.rag.arxiv_max_results = 3
 
-## Scoring Function
+designer = EnergeticDesigner(target, config)
+designer.initialize()
+best = designer.run_design_loop()
+print(best.smiles, best.score)
+```
+
+## GUI
+
+```bash
+python gui/app.py
+# open http://localhost:5001
+```
+
+## Configuration highlights
+
+- `beam_search.beam_width` / `top_k` / `max_iterations`
+- `beam_search.convergence_threshold` — MAPE-% change below which the search is considered converged
+- `scoring.mape_weight` / `sascore_weight` — combined-score weighting (default 0.7 / 0.3)
+- `rag.enable_rag`, `rag.use_llm`, `rag.max_papers`, `rag.arxiv_max_results`, `rag.cache_path`, `rag.openai_api_key`
+
+## Scoring
 
 ```
-Total Score = 0.7 × MAE + 0.3 × (1 - Feasibility)
+Total Score = mape_weight · MAPE(%) + sascore_weight · (1 − feasibility)
 ```
 
-Where:
-- **MAE**: Normalized mean absolute error across properties
-- **Feasibility**: SAScore-based synthetic accessibility (0-1)
-
-Lower score is better.
-
-## Modification Strategies
-
-1. **RAG-Based (Primary)**: Queries Arxiv for literature-informed modifications
-2. **Default Heuristics (Fallback)**: Rule-based chemical transformations
-   - Addition: Add functional groups (-NO2, -NH2, -N3, -CN)
-   - Subtraction: Remove terminal atoms/groups
-   - Substitution: Replace atoms/groups
-   - Ring Modifications: Add energetic rings (triazoles, tetrazoles)
-
-## Requirements
-
-- Python 3.8+
-- RDKit
-- XGBoost
-- LangChain (OpenAI, Community, Experimental)
-- ChromaDB
-- Pandas, NumPy
-- OpenAI API key (for RAG)
+Lower is better.
 
 ## License
 

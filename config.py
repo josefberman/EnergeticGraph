@@ -52,17 +52,22 @@ class StrategyPoolConfig:
 @dataclass
 class RAGConfig:
     """Configuration for RAG (Retrieval-Augmented Generation) property lookup."""
-    # Enable RAG property retrieval from literature
     enable_rag: bool = True
-    
-    # Use LLM (GPT-4) for property extraction from abstracts
     use_llm: bool = False
-    
-    # Maximum number of papers to search per molecule
     max_papers: int = 10
-    
-    # API timeout in seconds
     timeout: int = 15
+
+    # OpenAI API key for LLM extraction. Auto-loaded from .env.
+    # LLM extraction is skipped when this is empty.
+    openai_api_key: Optional[str] = field(
+        default_factory=lambda: os.getenv('OPENAI_API_KEY')
+    )
+
+    # Max ArXiv papers to retrieve per query (PDF downloads are expensive).
+    arxiv_max_results: int = 3
+
+    # SQLite cache for RAG results. Set to None to disable caching.
+    cache_path: Optional[str] = "./output/rag_cache.sqlite"
 
 
 @dataclass

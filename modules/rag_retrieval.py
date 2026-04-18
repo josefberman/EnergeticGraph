@@ -655,9 +655,17 @@ class LiteratureSearcher:
             else:
                 base_term = chemical_name
             
-            # Broader search - ArXiv doesn't have many energetics papers
-            # Try multiple queries: abbreviation, full name, and general energetic terms
-            query = f'all:{base_term} OR all:"{chemical_name}" OR (all:energetic AND all:material AND all:detonation)'
+            # Require a name-variant hit; no generic-fallback clause (which
+            # used to dominate results with off-topic energetics papers).
+            # Co-requiring an energetic keyword keeps precision high.
+            energetic_terms = '(all:energetic OR all:detonation OR all:explosive)'
+            if base_term.lower() != chemical_name.lower():
+                query = (
+                    f'(all:"{base_term}" OR all:"{chemical_name}") '
+                    f'AND {energetic_terms}'
+                )
+            else:
+                query = f'all:"{chemical_name}" AND {energetic_terms}'
             url = "http://export.arxiv.org/api/query"
             params = {
                 'search_query': query,
@@ -903,7 +911,7 @@ class PropertyExtractor:
             # Just number + GPa near detonation/explosion context  
             r'(?:detonation|explosion)[^.]{0,50}(\d+\.?\d*)\s*(?:GPa|gpa)',
         ],
-        'Heat of Formation': [
+        'Hf solid': [
             # Standard: "heat of formation of 200 kJ/mol", "enthalpy of formation -50 kJ/mol"
             r'(?:heat\s+of\s+formation|enthalpy\s+of\s+formation|formation\s+enthalpy|hof|Δhf|ΔH)\s*(?:of|=|:|is|was)?\s*([-−+]?\d+\.?\d*)\s*(?:kJ|kj)',
             r'([-−+]?\d+\.?\d*)\s*(?:kJ\s*/?\s*mol|kJ/mol|kj/mol)\s*.*?(?:heat|enthalpy|formation)',
@@ -930,8 +938,11 @@ class PropertyExtractor:
             llm_api_key: OpenAI API key for LLM extraction
             use_chunking: Whether to use embedding-based chunk retrieval
         """
-        self.use_llm = use_llm
         self.llm_api_key = llm_api_key or os.getenv('OPENAI_API_KEY')
+        # Only enable LLM extraction if both flag AND key are present.
+        self.use_llm = bool(use_llm and self.llm_api_key)
+        if use_llm and not self.llm_api_key:
+            logger.warning("LLM extraction requested but OPENAI_API_KEY is not set; disabling.")
         self.use_chunking = use_chunking
         
         # Initialize chunker and retriever for full-text processing
@@ -991,7 +1002,7 @@ class PropertyExtractor:
             'Density': None,
             'Det Velocity': None,
             'Det Pressure': None,
-            'Heat of Formation': None
+            'Hf solid': None
         }
         
         if not text:
@@ -1042,7 +1053,7 @@ class PropertyExtractor:
             'Density': None,
             'Det Velocity': None,
             'Det Pressure': None,
-            'Heat of Formation': None
+            'Hf solid': None
         }
         
         # Chunk the text
@@ -1127,7 +1138,7 @@ class PropertyExtractor:
             'Density': None,
             'Det Velocity': None,
             'Det Pressure': None,
-            'Heat of Formation': None
+            'Hf solid': None
         }
         
         # Normalize text
@@ -1144,33 +1155,48 @@ class PropertyExtractor:
         if not name_found and not keyword_found:
             return properties
         
-        # Extract each property using regex
+        # Extract each property using regex + require the chemical-name variant
+        # to appear within a 400-char window of the numeric hit (prevents
+        # picking values from unrelated molecules in the same paper).
+        proximity_window = 400
         for prop_name, patterns in self.PROPERTY_PATTERNS.items():
             for pattern in patterns:
-                matches = re.findall(pattern, text_lower, re.IGNORECASE)
-                if matches:
+                for m in re.finditer(pattern, text_lower, re.IGNORECASE):
                     try:
-                        value = float(matches[0].replace('−', '-').replace('–', '-'))
-                        
+                        value = float(m.group(1).replace('−', '-').replace('–', '-'))
+
                         # Apply unit conversions if needed
                         if 'km' in pattern and prop_name == 'Det Velocity':
                             value *= 1000  # km/s to m/s
                         elif 'kbar' in pattern and prop_name == 'Det Pressure':
                             value *= 0.1  # kbar to GPa
-                        elif 'kcal' in pattern and prop_name == 'Heat of Formation':
+                        elif 'kcal' in pattern and prop_name == 'Hf solid':
                             value *= 4.184  # kcal/mol to kJ/mol
-                        
-                        # Validate reasonable ranges
-                        if self._validate_value(prop_name, value):
-                            properties[prop_name] = RetrievedProperty(
-                                value=value,
-                                source="Regex extraction",
-                                confidence=0.7
-                            )
-                            break
+
+                        if not self._validate_value(prop_name, value):
+                            continue
+
+                        # Require chemical-name mention near the number
+                        # (skipped if neither name nor keyword was found,
+                        # which already returned early above).
+                        if name_found and name_variants:
+                            start = max(0, m.start() - proximity_window)
+                            end = min(len(text_lower), m.end() + proximity_window)
+                            window = text_lower[start:end]
+                            if not any(v in window for v in name_variants):
+                                continue
+
+                        properties[prop_name] = RetrievedProperty(
+                            value=value,
+                            source="Regex extraction",
+                            confidence=0.7
+                        )
+                        break
                     except (ValueError, IndexError):
                         continue
-        
+                if properties[prop_name] is not None:
+                    break
+
         return properties
     
     def _validate_value(self, prop_name: str, value: float) -> bool:
@@ -1179,7 +1205,7 @@ class PropertyExtractor:
             'Density': (0.5, 3.0),  # g/cm³
             'Det Velocity': (4000, 12000),  # m/s
             'Det Pressure': (10, 60),  # GPa
-            'Heat of Formation': (-500, 1000),  # kJ/mol (can be negative)
+            'Hf solid': (-500, 1000),  # kJ/mol (can be negative)
         }
         
         min_val, max_val = ranges.get(prop_name, (float('-inf'), float('inf')))
@@ -1191,7 +1217,7 @@ class PropertyExtractor:
             'Density': None,
             'Det Velocity': None,
             'Det Pressure': None,
-            'Heat of Formation': None
+            'Hf solid': None
         }
         
         try:
@@ -1236,7 +1262,7 @@ JSON response:"""
                     'density': 'Density',
                     'det_velocity': 'Det Velocity',
                     'det_pressure': 'Det Pressure',
-                    'heat_of_formation': 'Heat of Formation'
+                    'heat_of_formation': 'Hf solid'
                 }
                 
                 for json_key, prop_name in mapping.items():
@@ -1260,23 +1286,37 @@ class RAGPropertyRetriever:
     literature search, and property extraction.
     """
     
-    def __init__(self, 
+    def __init__(self,
                  use_llm: bool = False,
                  max_papers: int = 10,
-                 timeout: int = 15):
+                 timeout: int = 15,
+                 openai_api_key: Optional[str] = None,
+                 cache_path: Optional[str] = None):
         """
         Initialize RAG retriever.
-        
+
         Args:
             use_llm: Whether to use LLM for property extraction
             max_papers: Maximum papers to search
             timeout: API timeout in seconds
+            openai_api_key: OpenAI API key (falls back to OPENAI_API_KEY env var)
+            cache_path: Optional SQLite cache path; disables caching if None
         """
         self.name_converter = SMILESToNameConverter(timeout=timeout)
         self.searcher = LiteratureSearcher(max_results=max_papers, timeout=timeout)
-        self.extractor = PropertyExtractor(use_llm=use_llm)
-        
-        self.use_llm = use_llm
+        self.extractor = PropertyExtractor(use_llm=use_llm, llm_api_key=openai_api_key)
+
+        self.use_llm = self.extractor.use_llm
+
+        self.cache = None
+        if cache_path:
+            try:
+                from .rag_cache import RAGCache
+                self.cache = RAGCache(cache_path)
+                logger.info(f"RAG cache enabled at {cache_path}")
+            except Exception as e:
+                logger.warning(f"Failed to initialize RAG cache at {cache_path}: {e}")
+                self.cache = None
     
     def _get_chemical_name(self, smiles: str) -> Tuple[Optional[str], str]:
         """
@@ -1317,12 +1357,19 @@ class RAGPropertyRetriever:
         Returns:
             RAGResult with found properties
         """
+        # Cache hit short-circuits all network calls.
+        if self.cache is not None:
+            cached = self.cache.get(smiles)
+            if cached is not None:
+                logger.info(f"RAG cache hit: {smiles[:50]}")
+                return cached
+
         # Initialize result
         properties = {
             'Density': None,
             'Det Velocity': None,
             'Det Pressure': None,
-            'Heat of Formation': None
+            'Hf solid': None
         }
         
         # Step 1: Convert SMILES to name
@@ -1332,13 +1379,16 @@ class RAGPropertyRetriever:
         if not chemical_name:
             # Could not get name from either source
             logger.debug(f"Could not generate name for: {smiles[:30]}...")
-            return RAGResult(
+            empty = RAGResult(
                 smiles=smiles,
                 chemical_name=None,
                 properties=properties,
                 papers_searched=0,
                 papers_with_hits=0
             )
+            if self.cache is not None:
+                self.cache.put(smiles, empty)
+            return empty
         
         # Show where the name came from
         logger.info(f"Chemical name: {chemical_name} (via {name_source})")
@@ -1417,7 +1467,10 @@ class RAGPropertyRetriever:
             print(f"            ✅ Literature values: {', '.join(found_props)}")
         else:
             print(f"no property values found")
-        
+
+        if self.cache is not None:
+            self.cache.put(smiles, result)
+
         return result
 
 
@@ -1457,7 +1510,7 @@ def get_properties_with_rag(smiles: str,
                 sources[prop_name] = f"literature ({prop_value.source})"
     
     # Get missing properties from ML predictor
-    missing_props = [p for p in ['Density', 'Det Velocity', 'Det Pressure', 'Heat of Formation'] 
+    missing_props = [p for p in ['Density', 'Det Velocity', 'Det Pressure', 'Hf solid'] 
                     if p not in properties]
     
     if missing_props and predictor is not None:

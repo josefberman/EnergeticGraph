@@ -12,6 +12,7 @@ from modules.scoring import calculate_total_score
 from modules.strategy_pool import StrategyPoolModifier, default_modification_strategy
 from modules.rag_retrieval import RAGPropertyRetriever, get_properties_with_rag, PaperCitation
 from config import Config
+from typing import List, Dict, Optional, Tuple  # noqa: F401  (already imported above)
 
 logger = logging.getLogger(__name__)
 
@@ -21,37 +22,47 @@ class ChemistAgent:
     Worker agent that generates molecular variations using strategy pool.
     """
     
-    def __init__(self, parent_molecule: MoleculeState, 
+    def __init__(self, parent_molecule: MoleculeState,
                  target_properties: PropertyTarget,
-                 config: Config):
+                 config: Config,
+                 predictor: Optional[PropertyPredictor] = None,
+                 rag_retriever: Optional[RAGPropertyRetriever] = None):
         """
         Initialize chemist agent.
-        
+
         Args:
             parent_molecule: Parent MoleculeState
             target_properties: Target properties
             config: System configuration
+            predictor: Shared PropertyPredictor (built once per run by the
+                orchestrator). If None, a new one is constructed — useful for
+                unit tests but wasteful in production.
+            rag_retriever: Shared RAGPropertyRetriever. If None and RAG is
+                enabled in config, a new one is constructed.
         """
         self.parent = parent_molecule
         self.target = target_properties
         self.config = config
-        
-        # Initialize components
-        self.predictor = PropertyPredictor(config.system.models_directory)
-        
-        # Initialize RAG retriever if enabled
-        self.rag_retriever = None
-        if config.rag.enable_rag:
+
+        self.predictor = predictor if predictor is not None else PropertyPredictor(
+            config.system.models_directory
+        )
+
+        if rag_retriever is not None:
+            self.rag_retriever = rag_retriever
+        elif config.rag.enable_rag:
             self.rag_retriever = RAGPropertyRetriever(
                 use_llm=config.rag.use_llm,
                 max_papers=config.rag.max_papers,
-                timeout=config.rag.timeout
+                timeout=config.rag.timeout,
+                openai_api_key=config.rag.openai_api_key,
+                cache_path=config.rag.cache_path,
             )
-            logger.info("Initialized ChemistAgent with RAG property retrieval")
-        
-        # Initialize strategy pool modifier
+            logger.info("ChemistAgent built its own RAG retriever (no shared instance supplied)")
+        else:
+            self.rag_retriever = None
+
         self.strategy_modifier = StrategyPoolModifier(config)
-        logger.info("Initialized ChemistAgent with strategy pool")
     
     def analyze_property_gap(self) -> Dict[str, float]:
         """

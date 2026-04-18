@@ -1,7 +1,11 @@
-/.env
+# Environment / secrets
+.env
+.env.*
+!.env.example
 
 # IDE
 .idea/
+.vscode/
 
 # Python
 __pycache__/
@@ -9,6 +13,14 @@ __pycache__/
 *$py.class
 *.so
 .Python
+.pytest_cache/
+.venv/
+venv/
 
-# RAG evaluation results
+# RAG cache & output
+output/
+rag_cache.sqlite*
+
+# Evaluation results
 evaluation/evaluation/results/
+evaluation/results/
