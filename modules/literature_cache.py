@@ -1,5 +1,5 @@
 """
-Persistent SQLite cache for RAGPropertyRetriever results.
+Persistent SQLite cache for LiteraturePropertyRetriever results.
 
 Keyed by canonical SMILES. Stores the chemical name, the property dict
 (JSON-encoded), and the paper citation list (JSON-encoded). Supports
@@ -18,12 +18,12 @@ from typing import Optional, TYPE_CHECKING
 from rdkit import Chem
 
 if TYPE_CHECKING:
-    from .rag_retrieval import RAGResult
+    from .literature_search import LiteratureResult
 
 logger = logging.getLogger(__name__)
 
 _SCHEMA = """
-CREATE TABLE IF NOT EXISTS rag_results (
+CREATE TABLE IF NOT EXISTS literature_results (
     smiles          TEXT PRIMARY KEY,
     chemical_name   TEXT,
     properties_json TEXT NOT NULL,
@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS rag_results (
     created_at      REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS analogue_results (
-    name            TEXT PRIMARY KEY,   -- lowercase-stripped analogue name
+    name            TEXT PRIMARY KEY,
     properties_json TEXT NOT NULL,
     citations_json  TEXT NOT NULL,
     papers_searched INTEGER NOT NULL DEFAULT 0,
@@ -61,7 +61,7 @@ def _jsonable(obj):
     return obj
 
 
-class RAGCache:
+class LiteratureCache:
     """Thin SQLite wrapper; process- and thread-safe for the usage here."""
 
     def __init__(self, path: str, clear_on_init: bool = False):
@@ -76,9 +76,9 @@ class RAGCache:
     def clear(self) -> None:
         """Delete all cached entries from both tables."""
         with self._lock, self._connect() as conn:
-            conn.execute("DELETE FROM rag_results")
+            conn.execute("DELETE FROM literature_results")
             conn.execute("DELETE FROM analogue_results")
-        logger.info("RAG cache cleared.")
+        logger.info("Literature cache cleared.")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=10.0, isolation_level=None)
@@ -86,21 +86,21 @@ class RAGCache:
         conn.execute("PRAGMA synchronous=NORMAL")
         return conn
 
-    def get(self, smiles: str) -> Optional["RAGResult"]:
+    def get(self, smiles: str) -> Optional["LiteratureResult"]:
         canonical = _canonicalize(smiles)
         if canonical is None:
             return None
         with self._lock, self._connect() as conn:
             row = conn.execute(
                 "SELECT chemical_name, properties_json, citations_json, "
-                "papers_searched, papers_with_hits FROM rag_results WHERE smiles = ?",
+                "papers_searched, papers_with_hits FROM literature_results WHERE smiles = ?",
                 (canonical,),
             ).fetchone()
         if row is None:
             return None
         chemical_name, props_json, citations_json, papers_searched, papers_with_hits = row
 
-        from .rag_retrieval import RAGResult, RetrievedProperty, PaperCitation
+        from .literature_search import LiteratureResult, RetrievedProperty, PaperCitation
 
         props_raw = json.loads(props_json) if props_json else {}
         properties = {}
@@ -125,7 +125,7 @@ class RAGCache:
             for c in json.loads(citations_json or '[]')
         ]
 
-        return RAGResult(
+        return LiteratureResult(
             smiles=smiles,
             chemical_name=chemical_name,
             properties=properties,
@@ -152,7 +152,7 @@ class RAGCache:
             return None
         props_json, citations_json, papers_searched = row
 
-        from .rag_retrieval import RetrievedProperty, PaperCitation
+        from .literature_search import RetrievedProperty, PaperCitation
 
         props_raw = json.loads(props_json) if props_json else {}
         properties = {}
@@ -213,7 +213,7 @@ class RAGCache:
         try:
             with self._lock, self._connect() as conn:
                 conn.execute(
-                    "INSERT OR REPLACE INTO rag_results "
+                    "INSERT OR REPLACE INTO literature_results "
                     "(smiles, chemical_name, properties_json, citations_json, "
                     " papers_searched, papers_with_hits, created_at) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -228,4 +228,4 @@ class RAGCache:
                     ),
                 )
         except sqlite3.Error as e:
-            logger.warning(f"RAG cache write failed: {e}")
+            logger.warning(f"Literature cache write failed: {e}")

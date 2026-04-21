@@ -20,6 +20,7 @@ venv/
 # RAG cache & output
 output/
 rag_cache.sqlite*
+literature_cache.sqlite*
 
 # Evaluation results
 evaluation/evaluation/results/

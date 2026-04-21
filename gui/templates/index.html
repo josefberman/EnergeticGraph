@@ -19,10 +19,10 @@
                 <path d="M6 6 L12 18 L18 6"></path>
             </svg>
             <span class="brand-name">Energetic Designer</span>
-            <span class="brand-sub">RAG-augmented beam search</span>
+            <span class="brand-sub">Literature-augmented beam search</span>
         </div>
         <div class="topbar-right">
-            <span class="pill" id="rag-pill" data-state="on">RAG <strong>On</strong></span>
+            <span class="pill" id="lit-pill" data-state="on">Lit <strong>On</strong></span>
             <span class="pill status-pill" id="run-pill" data-state="idle">Idle</span>
         </div>
     </header>
@@ -76,8 +76,47 @@
                 <label class="toggle">
                     <input type="checkbox" id="enable-rag" checked>
                     <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                    <span class="toggle-text">Enable literature RAG</span>
+                    <span class="toggle-text">Enable literature search</span>
                 </label>
+                <label class="toggle">
+                    <input type="checkbox" id="use-llm">
+                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                    <span class="toggle-text">LLM extraction</span>
+                </label>
+
+                <!-- LLM backend selector -->
+                <div id="llm-backend-section" class="llm-backend-section">
+                    <div class="llm-backend-tabs" role="group" aria-label="LLM backend">
+                        <button type="button" class="llm-tab active" id="tab-openai" data-backend="openai">OpenAI</button>
+                        <button type="button" class="llm-tab" id="tab-ollama" data-backend="ollama">Ollama</button>
+                    </div>
+
+                    <!-- OpenAI panel -->
+                    <div id="panel-openai" class="llm-panel">
+                        <div id="api-key-status" class="api-key-status" aria-live="polite">
+                            <span class="api-key-dot"></span>
+                            <span class="api-key-label">Checking API key…</span>
+                        </div>
+                    </div>
+
+                    <!-- Ollama panel -->
+                    <div id="panel-ollama" class="llm-panel" hidden>
+                        <div class="field">
+                            <label for="ollama-url">Server URL</label>
+                            <input type="text" id="ollama-url" placeholder="http://localhost:11434"
+                                   autocomplete="off" spellcheck="false">
+                        </div>
+                        <div class="field">
+                            <label for="ollama-model">Model</label>
+                            <input type="text" id="ollama-model" placeholder="llama3.2"
+                                   value="llama3.2" autocomplete="off" spellcheck="false">
+                        </div>
+                        <div id="ollama-status" class="api-key-status" aria-live="polite">
+                            <span class="api-key-dot"></span>
+                            <span class="api-key-label">Enter server URL to check</span>
+                        </div>
+                    </div>
+                </div>
             </section>
 
             <div class="actions">
@@ -149,6 +188,35 @@
                         </div>
                     </div>
                 </div>
+            </article>
+
+            <!-- Literature card -->
+            <article class="card" id="lit-card">
+                <header class="card-header">
+                    <h2>Literature evidence</h2>
+                    <span class="card-sub" id="lit-sub">Disabled</span>
+                </header>
+                <div class="stat-row">
+                    <div class="stat">
+                        <span class="stat-label">Status</span>
+                        <span class="stat-value" id="lit-state">Off</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Molecules queried</span>
+                        <span class="stat-value" id="lit-molecules">0</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Literature hits</span>
+                        <span class="stat-value" id="lit-hits">0</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Unique papers</span>
+                        <span class="stat-value" id="lit-papers">0</span>
+                    </div>
+                </div>
+                <ul id="lit-citations" class="citation-list">
+                    <li class="empty-text">No citations yet.</li>
+                </ul>
             </article>
 
             <!-- Candidate grid -->

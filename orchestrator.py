@@ -1,7 +1,7 @@
 """
 Beam Search Orchestrator - manages the beam search algorithm.
 
-Owns the heavy shared components (PropertyPredictor, RAGPropertyRetriever)
+Owns the heavy shared components (PropertyPredictor, LiteraturePropertyRetriever)
 so we instantiate them ONCE per run, not once per ChemistAgent per iteration.
 """
 
@@ -12,7 +12,7 @@ from data_structures import MoleculeState, PropertyTarget
 from agents.worker_agent import ChemistAgent
 from config import Config
 from modules.prediction import PropertyPredictor
-from modules.rag_retrieval import RAGPropertyRetriever
+from modules.literature_search import LiteraturePropertyRetriever
 
 logger = logging.getLogger(__name__)
 
@@ -31,16 +31,18 @@ class BeamSearchEngine:
         # Shared heavy components — built once per run.
         self.predictor = PropertyPredictor(config.system.models_directory)
 
-        self.rag_retriever: Optional[RAGPropertyRetriever] = None
-        if config.rag.enable_rag:
-            self.rag_retriever = RAGPropertyRetriever(
-                use_llm=config.rag.use_llm,
-                max_papers=config.rag.max_papers,
-                timeout=config.rag.timeout,
-                openai_api_key=config.rag.openai_api_key,
-                cache_path=config.rag.cache_path,
+        self.literature_retriever: Optional[LiteraturePropertyRetriever] = None
+        if config.literature.enable_literature_search:
+            self.literature_retriever = LiteraturePropertyRetriever(
+                use_llm=config.literature.use_llm,
+                max_papers=config.literature.max_papers,
+                timeout=config.literature.timeout,
+                openai_api_key=config.literature.openai_api_key,
+                cache_path=config.literature.cache_path,
+                ollama_base_url=getattr(config.literature, 'ollama_base_url', None),
+                ollama_model=getattr(config.literature, 'ollama_model', 'llama3.2'),
             )
-            logger.info("BeamSearchEngine: shared RAG retriever initialized")
+            logger.info("BeamSearchEngine: shared literature retriever initialized")
 
         # Optional observer hooks for GUI / external callers.
         # Signature: on_iteration(iteration, all_candidates, beam)
@@ -119,7 +121,7 @@ class BeamSearchEngine:
                     self.target,
                     self.config,
                     predictor=self.predictor,
-                    rag_retriever=self.rag_retriever,
+                    literature_retriever=self.literature_retriever,
                 )
                 new_candidates = agent.generate_variations()
                 all_candidates.extend(new_candidates)
@@ -153,17 +155,41 @@ class BeamSearchEngine:
                     except Exception as e:
                         logger.warning(f"on_best callback failed: {e}")
 
-            # MAPE-to-MAPE convergence check (fixes the old score-vs-MAPE mix).
+            # --- Stop conditions ---------------------------------------------
             improvement = prev_best_mape - best_mape
             print(f"\n   📉 MAPE improvement: {improvement:+.3f}% "
                   f"(prev {prev_best_mape:.2f}% → now {best_mape:.2f}%)")
-            if iteration > 0 and improvement < self.beam_config.convergence_threshold:
-                print(f"\n   ✅ Converged (improvement < {self.beam_config.convergence_threshold}%).")
-                # Still report this iteration before breaking.
-                self._fire_iteration(iteration + 1, all_candidates, next_beam)
-                break
-            prev_best_mape = best_mape
 
+            # Absolute target reached? Use the globally-best MAPE so we don't
+            # miss a target that was hit in an earlier iteration.
+            target = float(getattr(self.beam_config, 'mape_target', 0.0) or 0.0)
+            best_ever_mape = self.calculate_mape(self.best_ever)
+            if target > 0 and best_ever_mape <= target:
+                print(f"\n   ✅ MAPE target reached: {best_ever_mape:.2f}% ≤ {target:.2f}%")
+                self._status(f"Target reached: MAPE {best_ever_mape:.2f}% ≤ {target:.2f}%")
+                self._fire_iteration(iteration + 1, all_candidates, next_beam)
+                current_beam = next_beam
+                self.history.append(current_beam)
+                break
+
+            # Patience-based plateau check — only applies when no explicit
+            # target was set. If the user set mape_target, honor it: keep
+            # searching until target or max_iterations.
+            if target <= 0:
+                if iteration > 0 and improvement < self.beam_config.convergence_threshold:
+                    self._stall_count = getattr(self, '_stall_count', 0) + 1
+                else:
+                    self._stall_count = 0
+                patience = max(1, int(getattr(self.beam_config, 'patience', 2)))
+                if self._stall_count >= patience:
+                    print(f"\n   ✅ Converged: no meaningful MAPE improvement for "
+                          f"{patience} iterations (Δ < {self.beam_config.convergence_threshold}%).")
+                    self._fire_iteration(iteration + 1, all_candidates, next_beam)
+                    current_beam = next_beam
+                    self.history.append(current_beam)
+                    break
+
+            prev_best_mape = best_mape
             current_beam = next_beam
             self.history.append(current_beam)
             self._fire_iteration(iteration + 1, all_candidates, next_beam)

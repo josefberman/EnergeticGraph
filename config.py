@@ -14,10 +14,18 @@ load_dotenv()
 @dataclass
 class BeamSearchConfig:
     """Configuration for beam search algorithm."""
-    beam_width: int = 10  # Number of candidates to keep in beam
-    top_k: int = 5  # Number of top candidates to select after each iteration
-    max_iterations: int = 20  # Maximum number of search iterations
-    convergence_threshold: float = 0.001  # Stop if improvement < threshold
+    beam_width: int = 10
+    top_k: int = 5
+    max_iterations: int = 20
+
+    # Absolute MAPE target (%). Search stops when best MAPE ≤ this value.
+    # 0 disables the check (run until max_iterations or no-improvement).
+    mape_target: float = 0.0
+
+    # Minimum MAPE-improvement (percentage points) between iterations.
+    # If improvement < this for `patience` consecutive iterations, stop.
+    convergence_threshold: float = 0.05
+    patience: int = 2
 
 
 @dataclass
@@ -50,24 +58,25 @@ class StrategyPoolConfig:
 
 
 @dataclass
-class RAGConfig:
-    """Configuration for RAG (Retrieval-Augmented Generation) property lookup."""
-    enable_rag: bool = True
+class LiteratureSearchConfig:
+    """Configuration for literature-based property lookup."""
+    enable_literature_search: bool = True
     use_llm: bool = False
     max_papers: int = 10
     timeout: int = 15
 
-    # OpenAI API key for LLM extraction. Auto-loaded from .env.
-    # LLM extraction is skipped when this is empty.
     openai_api_key: Optional[str] = field(
         default_factory=lambda: os.getenv('OPENAI_API_KEY')
     )
 
-    # Max ArXiv papers to retrieve per query (PDF downloads are expensive).
-    arxiv_max_results: int = 3
+    cache_path: Optional[str] = "./output/literature_cache.sqlite"
 
-    # SQLite cache for RAG results. Set to None to disable caching.
-    cache_path: Optional[str] = "./output/rag_cache.sqlite"
+    ollama_base_url: Optional[str] = field(
+        default_factory=lambda: os.getenv('OLLAMA_BASE_URL')
+    )
+    ollama_model: str = field(
+        default_factory=lambda: os.getenv('OLLAMA_MODEL', 'llama3.2')
+    )
 
 
 @dataclass
@@ -86,5 +95,5 @@ class Config:
     beam_search: BeamSearchConfig = field(default_factory=BeamSearchConfig)
     scoring: ScoringConfig = field(default_factory=ScoringConfig)
     strategy_pool: StrategyPoolConfig = field(default_factory=StrategyPoolConfig)
-    rag: RAGConfig = field(default_factory=RAGConfig)
+    literature: LiteratureSearchConfig = field(default_factory=LiteratureSearchConfig)
     system: SystemConfig = field(default_factory=SystemConfig)

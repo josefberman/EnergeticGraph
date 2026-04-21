@@ -10,9 +10,8 @@ from modules.prediction import PropertyPredictor
 from modules.feasibility import calculate_feasibility
 from modules.scoring import calculate_total_score
 from modules.strategy_pool import StrategyPoolModifier, default_modification_strategy
-from modules.rag_retrieval import RAGPropertyRetriever, get_properties_with_rag, PaperCitation
+from modules.literature_search import LiteraturePropertyRetriever, PaperCitation
 from config import Config
-from typing import List, Dict, Optional, Tuple  # noqa: F401  (already imported above)
 
 logger = logging.getLogger(__name__)
 
@@ -26,20 +25,7 @@ class ChemistAgent:
                  target_properties: PropertyTarget,
                  config: Config,
                  predictor: Optional[PropertyPredictor] = None,
-                 rag_retriever: Optional[RAGPropertyRetriever] = None):
-        """
-        Initialize chemist agent.
-
-        Args:
-            parent_molecule: Parent MoleculeState
-            target_properties: Target properties
-            config: System configuration
-            predictor: Shared PropertyPredictor (built once per run by the
-                orchestrator). If None, a new one is constructed — useful for
-                unit tests but wasteful in production.
-            rag_retriever: Shared RAGPropertyRetriever. If None and RAG is
-                enabled in config, a new one is constructed.
-        """
+                 literature_retriever: Optional[LiteraturePropertyRetriever] = None):
         self.parent = parent_molecule
         self.target = target_properties
         self.config = config
@@ -48,19 +34,19 @@ class ChemistAgent:
             config.system.models_directory
         )
 
-        if rag_retriever is not None:
-            self.rag_retriever = rag_retriever
-        elif config.rag.enable_rag:
-            self.rag_retriever = RAGPropertyRetriever(
-                use_llm=config.rag.use_llm,
-                max_papers=config.rag.max_papers,
-                timeout=config.rag.timeout,
-                openai_api_key=config.rag.openai_api_key,
-                cache_path=config.rag.cache_path,
+        if literature_retriever is not None:
+            self.literature_retriever = literature_retriever
+        elif config.literature.enable_literature_search:
+            self.literature_retriever = LiteraturePropertyRetriever(
+                use_llm=config.literature.use_llm,
+                max_papers=config.literature.max_papers,
+                timeout=config.literature.timeout,
+                openai_api_key=config.literature.openai_api_key,
+                cache_path=config.literature.cache_path,
             )
-            logger.info("ChemistAgent built its own RAG retriever (no shared instance supplied)")
+            logger.info("ChemistAgent built its own literature retriever")
         else:
-            self.rag_retriever = None
+            self.literature_retriever = None
 
         self.strategy_modifier = StrategyPoolModifier(config)
     
@@ -239,11 +225,9 @@ class ChemistAgent:
                 logger.debug(f"Failed to get properties for {smiles}")
                 return None
             
-            # Log property sources and citations
-            rag_count = sum(1 for s in sources.values() if 'literature' in s.lower())
-            if rag_count > 0:
-                logger.info(f"RAG retrieved {rag_count}/4 properties from literature for {smiles[:30]}...")
-                # Display citations in CLI
+            lit_count = sum(1 for s in sources.values() if 'literature' in s.lower())
+            if lit_count > 0:
+                logger.info(f"Literature retrieved {lit_count}/4 properties for {smiles[:30]}...")
                 self._display_citations(citations, smiles)
             
             # Calculate feasibility (normalized SAScore)
@@ -260,12 +244,21 @@ class ChemistAgent:
                 property_weights=self.config.scoring.property_weights
             )
             
-            # Build provenance string with property sources
             provenance_parts = [f"{self.parent.provenance} -> modification"]
-            if rag_count > 0:
-                provenance_parts.append(f"[RAG: {rag_count} props]")
+            if lit_count > 0:
+                provenance_parts.append(f"[Lit: {lit_count} props]")
             
-            # Create MoleculeState
+            citations_serialized = [
+                {
+                    'title': getattr(c, 'title', ''),
+                    'authors': list(getattr(c, 'authors', []) or []),
+                    'doi': getattr(c, 'doi', ''),
+                    'source_db': getattr(c, 'source_db', ''),
+                    'properties_found': list(getattr(c, 'properties_found', []) or []),
+                }
+                for c in (citations or [])
+            ]
+
             candidate = MoleculeState(
                 smiles=smiles,
                 properties=properties,
@@ -274,7 +267,9 @@ class ChemistAgent:
                 is_feasible=is_feasible,
                 provenance=" ".join(provenance_parts),
                 generation=self.parent.generation + 1,
-                parent_smiles=self.parent.smiles
+                parent_smiles=self.parent.smiles,
+                property_sources=sources or {},
+                citations=citations_serialized,
             )
             
             logger.debug(f"Evaluated {smiles}: score={score:.4f}, feasible={is_feasible}")
@@ -285,36 +280,28 @@ class ChemistAgent:
             return None
     
     def _get_properties_with_rag_fallback(self, smiles: str) -> Tuple[Optional[Dict[str, float]], Dict[str, str], List[PaperCitation]]:
-        """
-        Get properties using RAG retrieval first, then ML prediction for missing values.
-        
-        Args:
-            smiles: SMILES string
-            
-        Returns:
-            Tuple of (properties dict, sources dict, citations list)
-        """
+        """Literature search first, then ML prediction for missing values."""
         properties = {}
         sources = {}
         citations = []
         
         required_props = ['Density', 'Det Velocity', 'Det Pressure', 'Hf solid']
         
-        # Step 1: Try RAG retrieval if enabled
-        if self.rag_retriever is not None:
+        if self.literature_retriever is not None:
             try:
-                rag_result = self.rag_retriever.retrieve_properties(smiles)
+                result = self.literature_retriever.retrieve_properties(smiles)
                 
-                for prop_name, prop_value in rag_result.properties.items():
+                for prop_name, prop_value in result.properties.items():
                     if prop_value is not None:
                         properties[prop_name] = prop_value.value
-                        sources[prop_name] = f"literature ({prop_value.source[:30]}...)" if len(prop_value.source) > 30 else f"literature ({prop_value.source})"
+                        label = 'analogue' if str(prop_value.source).lower().startswith('analogue') else 'literature'
+                        src = prop_value.source
+                        sources[prop_name] = f"{label} ({src[:40]}...)" if len(src) > 40 else f"{label} ({src})"
                 
-                # Collect citations
-                citations = rag_result.citations or []
+                citations = result.citations or []
                         
             except Exception as e:
-                logger.warning(f"RAG retrieval failed for {smiles[:30]}...: {e}")
+                logger.warning(f"Literature retrieval failed for {smiles[:30]}...: {e}")
         
         # Step 2: ML prediction for missing properties
         missing_props = [p for p in required_props if p not in properties]

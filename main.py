@@ -59,13 +59,11 @@ def main():
     parser.add_argument('--max-iter', type=int, default=20,
                        help='Maximum iterations (default: 20)')
     
-    # RAG configuration
+    # Literature search configuration
     parser.add_argument('--disable-rag', action='store_true',
-                       help='Disable RAG-based modification strategy (enabled by default)')
+                       help='Disable literature search (enabled by default)')
     parser.add_argument('--openai-key', type=str, default=None,
                        help='OpenAI API key (if not set in env)')
-    parser.add_argument('--arxiv-max', type=int, default=3,
-                       help='Max Arxiv papers to retrieve (default: 3)')
     
     # System
     parser.add_argument('--dataset', type=str, default='./sample_start_molecules.csv',
@@ -91,16 +89,11 @@ def main():
     config.beam_search.top_k = args.top_k
     config.beam_search.max_iterations = args.max_iter
     
-    # Disable RAG if flag is provided
     if args.disable_rag:
-        config.rag.enable_rag = False
+        config.literature.enable_literature_search = False
     
-    # Override API key if provided via command line
     if args.openai_key:
-        config.rag.openai_api_key = args.openai_key
-    # Otherwise, it will use the value from .env (auto-loaded in config.py)
-    
-    config.rag.arxiv_max_results = args.arxiv_max
+        config.literature.openai_api_key = args.openai_key
     
     config.system.dataset_path = args.dataset
     config.system.models_directory = args.models_dir
@@ -127,7 +120,7 @@ def main():
     print(f"      • Beam Width:       {config.beam_search.beam_width}")
     print(f"      • Top K:            {config.beam_search.top_k}")
     print(f"      • Max Iterations:   {config.beam_search.max_iterations}")
-    print(f"      • RAG Enabled:      {'✅ Yes' if config.rag.enable_rag else '❌ No'}")
+    print(f"      • Literature Search: {'✅ Yes' if config.literature.enable_literature_search else '❌ No'}")
     
     # Run design loop
     print("\n\n🚀 STARTING BEAM SEARCH OPTIMIZATION")

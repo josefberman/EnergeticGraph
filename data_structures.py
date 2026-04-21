@@ -3,7 +3,7 @@ Core data structures for the beam search molecular design system.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -13,14 +13,21 @@ class MoleculeState:
     
     This is the fundamental node object passed between agents and modules.
     """
-    smiles: str  # SMILES representation
-    properties: Dict[str, float] = field(default_factory=dict)  # Predicted properties
-    score: float = float('inf')  # Total score (lower is better)
-    feasibility: float = 1.0  # Normalized SAScore (0-1, 0 = most feasible, 1 = least feasible)
-    provenance: str = ""  # History of modifications
-    is_feasible: bool = False  # Whether molecule passes feasibility checks (SAScore <= 7)
-    generation: int = 0  # Which iteration this molecule was created in
-    parent_smiles: Optional[str] = None  # Parent molecule SMILES
+    smiles: str
+    properties: Dict[str, float] = field(default_factory=dict)
+    score: float = float('inf')
+    feasibility: float = 1.0
+    provenance: str = ""
+    is_feasible: bool = False
+    generation: int = 0
+    parent_smiles: Optional[str] = None
+
+    # Where each property came from: "literature (…)", "predicted (XGBoost)",
+    # "dataset", etc. Empty for seeds from the CSV dataset.
+    property_sources: Dict[str, str] = field(default_factory=dict)
+    # Papers that contributed property data. Each dict: title, authors, doi,
+    # source_db, properties_found.
+    citations: List[Dict[str, Any]] = field(default_factory=list)
     
     def __repr__(self) -> str:
         return (f"MoleculeState(smiles='{self.smiles}', "
@@ -42,7 +49,9 @@ class MoleculeState:
             'provenance': self.provenance,
             'is_feasible': self.is_feasible,
             'generation': self.generation,
-            'parent_smiles': self.parent_smiles
+            'parent_smiles': self.parent_smiles,
+            'property_sources': self.property_sources,
+            'citations': self.citations,
         }
     
     @classmethod

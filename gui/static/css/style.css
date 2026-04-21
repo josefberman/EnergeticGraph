@@ -310,6 +310,72 @@ body {
     color: var(--text);
 }
 
+/* LLM backend selector */
+.llm-backend-section {
+    margin-top: 8px;
+    margin-left: 0;
+}
+
+.llm-backend-tabs {
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    width: fit-content;
+    margin-bottom: 8px;
+}
+
+.llm-tab {
+    flex: 1;
+    padding: 4px 14px;
+    font-size: 12px;
+    font-weight: 500;
+    font-family: var(--font);
+    border: none;
+    background: var(--bg-subtle);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background 100ms, color 100ms;
+}
+
+.llm-tab:not(:last-child) {
+    border-right: 1px solid var(--border);
+}
+
+.llm-tab.active {
+    background: var(--accent);
+    color: #fff;
+}
+
+.llm-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.api-key-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 2px;
+    margin-left: 42px; /* indent under the toggle */
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.api-key-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--border-strong);
+}
+
+.api-key-status[data-state="present"] .api-key-dot { background: var(--success); }
+.api-key-status[data-state="missing"] .api-key-dot { background: var(--danger); }
+.api-key-status[data-state="present"] { color: var(--success); }
+.api-key-status[data-state="missing"] { color: var(--danger); }
+
 /* ---------- Buttons ---------- */
 .actions {
     display: flex;
@@ -527,6 +593,128 @@ body {
 
 .delta.up { color: var(--success); }
 .delta.down { color: var(--danger); }
+
+/* Per-property source chip */
+.origin {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 0 6px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    border-radius: 4px;
+    vertical-align: 1px;
+    border: 1px solid var(--border);
+    background: var(--bg-subtle);
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+.origin.lit {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-color: transparent;
+}
+
+.origin.data {
+    background: var(--success-soft);
+    color: var(--success);
+    border-color: transparent;
+}
+
+.origin.ana {
+    background: var(--warning-soft);
+    color: var(--warning);
+    border-color: transparent;
+}
+
+/* Citation list on the Literature card and on molecule cards */
+.citation-list {
+    list-style: none;
+    padding: 0;
+    margin: 12px 0 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.citation-list li {
+    padding: 10px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    color: var(--text);
+    line-height: 1.45;
+}
+
+.citation-list li.empty-text {
+    background: transparent;
+    border: none;
+    color: var(--text-subtle);
+    padding: 6px 0;
+    font-style: italic;
+}
+
+.citation-title {
+    font-weight: 500;
+    display: block;
+    margin-bottom: 2px;
+}
+
+.citation-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.citation-meta a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+.citation-meta a:hover {
+    text-decoration: underline;
+}
+
+.citation-props {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+.citation-props span {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--bg-subtle);
+    color: var(--text-muted);
+}
+
+/* Compact citations inside the seed/best molecule cards */
+.mol-card .citation-list,
+.candidate-card .citation-list,
+.drawer-body .citation-list {
+    margin-top: 10px;
+}
+
+.mol-card .citation-list li,
+.candidate-card .citation-list li {
+    padding: 6px 8px;
+    font-size: 11px;
+}
+
+/* Small "Lit n/4" chip on molecule cards */
+.lit-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+}
 
 /* ---------- Candidates grid ---------- */
 .candidates-grid {

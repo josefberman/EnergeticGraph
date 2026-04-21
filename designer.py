@@ -120,7 +120,7 @@ class EnergeticDesigner:
                 'beam_width': self.config.beam_search.beam_width,
                 'top_k': self.config.beam_search.top_k,
                 'max_iterations': self.config.beam_search.max_iterations,
-                'rag_enabled': self.config.rag.enable_rag
+                'literature_enabled': self.config.literature.enable_literature_search
             }
         }
         

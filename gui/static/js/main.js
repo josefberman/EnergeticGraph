@@ -8,8 +8,14 @@
         running: false,
         iteration: 0,
         maxIter: 10,
-        seedProperties: null,
         targetProperties: null,
+        lit: {
+            enabled: false,
+            useLlm: false,
+            moleculesQueried: 0,
+            literatureHits: 0,
+            papers: new Map(),
+        },
     };
 
     const els = {
@@ -21,7 +27,8 @@
         topK: $('top-k'),
         maxIter: $('max-iter'),
         mape: $('mape-threshold'),
-        enableRag: $('enable-rag'),
+        enableLit: $('enable-rag'),
+        useLlm: $('use-llm'),
         runBtn: $('run-btn'),
         stopBtn: $('stop-btn'),
         statusMsg: $('status-message'),
@@ -39,8 +46,23 @@
         candSub: $('candidates-sub'),
         compSub: $('comparison-sub'),
         progressSub: $('progress-subtitle'),
-        ragPill: $('rag-pill'),
+        litPill: $('lit-pill'),
         runPill: $('run-pill'),
+        litSub: $('lit-sub'),
+        litState: $('lit-state'),
+        litMolecules: $('lit-molecules'),
+        litHits: $('lit-hits'),
+        litPapers: $('lit-papers'),
+        litCitations: $('lit-citations'),
+        apiKeyStatus: $('api-key-status'),
+        ollamaStatus: $('ollama-status'),
+        ollamaUrl: $('ollama-url'),
+        ollamaModel: $('ollama-model'),
+        tabOpenai: $('tab-openai'),
+        tabOllama: $('tab-ollama'),
+        panelOpenai: $('panel-openai'),
+        panelOllama: $('panel-ollama'),
+        llmBackendSection: $('llm-backend-section'),
         drawer: $('candidate-drawer'),
         drawerBody: $('drawer-body'),
         drawerClose: $('drawer-close'),
@@ -74,27 +96,81 @@
 
     const PROP_KEYS = ['Density', 'Det Velocity', 'Det Pressure', 'Hf solid'];
 
-    const molPropertyTable = (props, { target = null, baseline = null } = {}) => {
+    const ORIGIN_LABEL = { lit: 'lit', ana: 'ana', pred: 'pred', data: 'data' };
+    const ORIGIN_TITLE = {
+        lit: 'from literature search',
+        ana: 'from literature analogue (fallback)',
+        pred: 'predicted (XGBoost)',
+        data: 'from dataset',
+    };
+
+    const originChip = (origin) => {
+        if (!origin) return '';
+        const cls = origin in ORIGIN_LABEL ? origin : 'pred';
+        return `<span class="origin ${cls}" title="${ORIGIN_TITLE[cls]}">${ORIGIN_LABEL[cls]}</span>`;
+    };
+
+    const molPropertyTable = (props, { target = null, origin = null } = {}) => {
         const rows = PROP_KEYS.map((key) => {
             const cell = fmtProp(key, props?.[key]);
             let delta = '';
-            if (target && baseline && props?.[key] !== undefined) {
-                const baseErr = Math.abs(baseline[key] - target[key]);
-                const currErr = Math.abs(props[key] - target[key]);
-                if (baseErr > 0) {
-                    const improvement = (baseErr - currErr) / baseErr;
-                    const pct = (improvement * 100).toFixed(1);
-                    const cls = improvement > 0 ? 'up' : improvement < 0 ? 'down' : '';
-                    const sign = improvement > 0 ? '+' : '';
-                    delta = `<span class="delta ${cls}">${sign}${pct}%</span>`;
+            if (target && props?.[key] !== undefined && target[key] !== undefined) {
+                const tgt = target[key];
+                if (Math.abs(tgt) > 0) {
+                    const pct = ((props[key] - tgt) / Math.abs(tgt)) * 100;
+                    const abs = Math.abs(pct);
+                    const cls = abs < 2 ? 'up' : abs < 10 ? '' : 'down';
+                    const sign = pct > 0 ? '+' : '';
+                    delta = `<span class="delta ${cls}" title="vs. target">${sign}${pct.toFixed(1)}%</span>`;
                 }
             }
-            return `<tr><td>${key}</td><td>${cell}${delta}</td></tr>`;
+            const chip = origin && origin[key] ? originChip(origin[key]) : '';
+            return `<tr><td>${key}${chip}</td><td>${cell}${delta}</td></tr>`;
         }).join('');
         return `<table class="prop-table"><tbody>${rows}</tbody></table>`;
     };
 
-    const renderMoleculeCard = (container, payload, { baseline = null } = {}) => {
+    const escapeHtml = (s) => String(s || '').replace(/[&<>"']/g,
+        (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+    const doiLink = (doi) => {
+        if (!doi) return '';
+        const clean = doi.replace(/^https?:\/\/(dx\.)?doi\.org\//i, '');
+        return `<a href="https://doi.org/${encodeURI(clean)}" target="_blank" rel="noopener">${escapeHtml(clean)}</a>`;
+    };
+
+    const renderCitationItem = (c) => {
+        const title = escapeHtml(c.title || 'Untitled');
+        const authors = (c.authors || []).slice(0, 3).map(escapeHtml).join(', ');
+        const more = (c.authors || []).length > 3 ? ' et al.' : '';
+        const source = escapeHtml(c.source_db || '');
+        const doi = doiLink(c.doi);
+        const props = (c.properties_found || []).map((p) =>
+            `<span>${escapeHtml(p)}</span>`).join('');
+        return `
+            <li>
+                <span class="citation-title">${title}</span>
+                <span class="citation-meta">
+                    ${authors}${more}
+                    ${source ? ` · ${source}` : ''}
+                    ${doi ? ` · ${doi}` : ''}
+                </span>
+                ${props ? `<div class="citation-props">${props}</div>` : ''}
+            </li>
+        `;
+    };
+
+    const renderInlineCitations = (citations) => {
+        if (!citations || citations.length === 0) return '';
+        return `<ul class="citation-list">${citations.map(renderCitationItem).join('')}</ul>`;
+    };
+
+    const litChip = (hits) => {
+        if (!hits || hits <= 0) return '';
+        return `<span class="lit-chip" title="Properties sourced from literature">Lit ${hits}/4</span>`;
+    };
+
+    const renderMoleculeCard = (container, payload) => {
         if (!payload) return;
         container.classList.remove('empty');
         const mape = payload.mape;
@@ -104,11 +180,16 @@
         container.innerHTML = `
             ${payload.image ? `<img src="${payload.image}" class="mol-image" alt="Molecule structure">` : ''}
             <div class="mol-smiles" title="${payload.smiles}">${payload.smiles}</div>
-            ${molPropertyTable(payload.properties, { target: state.targetProperties, baseline })}
+            ${molPropertyTable(payload.properties, {
+                target: state.targetProperties,
+                origin: payload.property_origin,
+            })}
             <div class="candidate-meta">
                 ${badge}
+                ${litChip(payload.lit_hits)}
                 <span>Feas. ${((1 - payload.feasibility) * 100).toFixed(0)}%</span>
             </div>
+            ${renderInlineCitations(payload.citations)}
         `;
     };
 
@@ -131,16 +212,19 @@
                 <button type="button" class="candidate-card" data-idx="${i}">
                     ${c.image ? `<img src="${c.image}" class="mol-image" alt="">` : ''}
                     <div class="mol-smiles" title="${c.smiles}">${c.smiles}</div>
-                    ${molPropertyTable(c.properties, { target: state.targetProperties })}
+                    ${molPropertyTable(c.properties, {
+                        target: state.targetProperties,
+                        origin: c.property_origin,
+                    })}
                     <div class="candidate-meta">
                         ${badge}
+                        ${litChip(c.lit_hits)}
                         <span>Feas. ${((1 - c.feasibility) * 100).toFixed(0)}%</span>
                     </div>
                 </button>
             `;
         }).join('');
         els.candidates.innerHTML = html;
-        // Attach drawer handlers
         els.candidates.querySelectorAll('.candidate-card').forEach((node, idx) => {
             node.addEventListener('click', () => openDrawer(candidates[idx]));
         });
@@ -151,14 +235,19 @@
         els.drawerBody.innerHTML = `
             ${payload.image ? `<img src="${payload.image}" class="mol-image" alt="">` : ''}
             <div class="mol-smiles">${payload.smiles}</div>
-            ${molPropertyTable(payload.properties, { target: state.targetProperties })}
+            ${molPropertyTable(payload.properties, {
+                target: state.targetProperties,
+                origin: payload.property_origin,
+            })}
             <div class="candidate-meta" style="margin-top:12px">
                 <span class="badge ${mapeBadgeClass(payload.mape)}">MAPE ${fmt(payload.mape, 2)}%</span>
+                ${litChip(payload.lit_hits)}
                 <span>Feasibility ${((1 - payload.feasibility) * 100).toFixed(0)}%</span>
             </div>
             <p style="font-size:12px;color:var(--text-muted);margin-top:14px">
                 Combined score: ${fmt(payload.score, 4)}
             </p>
+            ${renderInlineCitations(payload.citations)}
         `;
         els.drawer.setAttribute('aria-hidden', 'false');
     };
@@ -201,7 +290,11 @@
             top_k: parseInt(els.topK.value, 10),
             max_iter: parseInt(els.maxIter.value, 10),
             mape_threshold: parseFloat(els.mape.value),
-            enable_rag: els.enableRag.checked,
+            enable_rag: els.enableLit.checked,
+            use_llm: els.enableLit.checked && els.useLlm.checked,
+            ollama_base_url: _activeBackend === 'ollama'
+                ? (els.ollamaUrl.value || '').trim() : '',
+            ollama_model: (els.ollamaModel.value || 'llama3.2').trim(),
         };
 
         state.maxIter = payload.max_iter;
@@ -219,7 +312,8 @@
         els.seedMol.innerHTML = '<p class="empty-text">Loading…</p>';
         els.bestMol.classList.add('empty');
         els.bestMol.innerHTML = '<p class="empty-text">No results yet</p>';
-        state.seedProperties = null;
+        setLitState(els.enableLit.checked, els.enableLit.checked && els.useLlm.checked, false);
+        resetLit();
 
         try {
             const res = await fetch('/api/start', {
@@ -262,9 +356,68 @@
                 /* ignore */
             }
         };
-        state.es.onerror = () => {
-            // Let SSE auto-reconnect; no action.
-        };
+        state.es.onerror = () => {};
+    };
+
+    const ingestLitPayload = (payload) => {
+        if (!state.lit.enabled || !payload) return;
+        state.lit.moleculesQueried += 1;
+        if (payload.lit_hits) state.lit.literatureHits += payload.lit_hits;
+        for (const c of (payload.citations || [])) {
+            const key = (c.doi && c.doi.trim()) || c.title || '';
+            if (!key) continue;
+            const prev = state.lit.papers.get(key);
+            if (prev) {
+                const merged = new Set([
+                    ...(prev.properties_found || []),
+                    ...(c.properties_found || []),
+                ]);
+                prev.properties_found = [...merged];
+            } else {
+                state.lit.papers.set(key, { ...c });
+            }
+        }
+        renderLitCard();
+    };
+
+    const renderLitCard = () => {
+        els.litMolecules.textContent = String(state.lit.moleculesQueried);
+        els.litHits.textContent = String(state.lit.literatureHits);
+        els.litPapers.textContent = String(state.lit.papers.size);
+        if (state.lit.papers.size === 0) {
+            els.litCitations.innerHTML = `<li class="empty-text">${
+                state.lit.enabled
+                    ? 'No literature hits yet.'
+                    : 'Enable literature search to retrieve papers.'
+            }</li>`;
+            return;
+        }
+        const items = [...state.lit.papers.values()]
+            .sort((a, b) => (b.properties_found?.length || 0) - (a.properties_found?.length || 0))
+            .slice(0, 20);
+        els.litCitations.innerHTML = items.map(renderCitationItem).join('');
+    };
+
+    const setLitState = (enabled, useLlm, llmAnalogue) => {
+        state.lit.enabled = !!enabled;
+        state.lit.useLlm = !!useLlm;
+        els.litPill.dataset.state = enabled ? 'on' : 'off';
+        els.litPill.innerHTML = `Lit <strong>${enabled ? 'On' : 'Off'}</strong>`;
+        let mode = 'regex';
+        if (useLlm && llmAnalogue) mode = 'LLM extract + analogue';
+        else if (useLlm) mode = 'LLM extract';
+        else if (llmAnalogue) mode = 'regex · LLM analogue';
+        els.litState.textContent = enabled ? `On · ${mode}` : 'Off';
+        els.litSub.textContent = enabled
+            ? `Literature search · ${mode}`
+            : 'Disabled — all properties predicted';
+    };
+
+    const resetLit = () => {
+        state.lit.moleculesQueried = 0;
+        state.lit.literatureHits = 0;
+        state.lit.papers = new Map();
+        renderLitCard();
     };
 
     const handleEvent = (data) => {
@@ -275,12 +428,21 @@
                 setStatus(data.message);
                 els.progressSub.textContent = data.message;
                 return;
+            case 'literature_status': {
+                setLitState(data.enabled, data.use_llm, data.llm_analogue);
+                if (data.llm_backend === 'ollama') {
+                    setOllamaStatus(true, els.ollamaUrl.value, data.ollama_model || '');
+                } else {
+                    setApiKeyStatus(data.llm_analogue, '');
+                }
+                resetLit();
+                return;
+            }
             case 'target':
                 state.targetProperties = data.properties;
                 renderTarget(data.properties);
                 return;
             case 'seed':
-                state.seedProperties = data.properties;
                 renderMoleculeCard(els.seedMol, data);
                 els.compSub.textContent = 'Seed loaded';
                 return;
@@ -292,17 +454,17 @@
                     `${Math.min(100, (data.iteration / state.maxIter) * 100)}%`;
                 els.progressSub.textContent =
                     `Iteration ${data.iteration} of up to ${state.maxIter}`;
-                // Stats based on best candidate
                 if (data.candidates.length > 0) {
                     const best = data.candidates[0];
                     els.bestMape.textContent = `${fmt(best.mape, 2)}%`;
                     els.bestFeas.textContent = `${((1 - best.feasibility) * 100).toFixed(0)}%`;
                     els.bestScore.textContent = fmt(best.score, 3);
                 }
+                for (const c of (data.candidates || [])) ingestLitPayload(c);
                 renderCandidates(data.iteration, data.candidates);
                 return;
             case 'best':
-                renderMoleculeCard(els.bestMol, data, { baseline: state.seedProperties });
+                renderMoleculeCard(els.bestMol, data);
                 els.compSub.textContent = `Best found at iteration ${state.iteration}`;
                 return;
             case 'complete':
@@ -326,10 +488,90 @@
     };
 
     // ---------------------------------------------------------------- init
+    let _activeBackend = 'openai';
+
+    const setOllamaStatus = (reachable, url, model) => {
+        const el = els.ollamaStatus;
+        if (!url) {
+            el.dataset.state = '';
+            el.querySelector('.api-key-label').textContent = 'Enter server URL to check';
+            return;
+        }
+        if (reachable) {
+            el.dataset.state = 'present';
+            el.querySelector('.api-key-label').textContent =
+                `Reachable · model: ${model || 'llama3.2'}`;
+        } else {
+            el.dataset.state = 'missing';
+            el.querySelector('.api-key-label').textContent =
+                `Cannot reach ${url}`;
+        }
+    };
+
+    const setApiKeyStatus = (hasKey, hint) => {
+        const el = els.apiKeyStatus;
+        if (hasKey) {
+            el.dataset.state = 'present';
+            el.querySelector('.api-key-label').textContent =
+                `API key present${hint ? ` (${hint})` : ''}`;
+        } else {
+            el.dataset.state = 'missing';
+            el.querySelector('.api-key-label').textContent =
+                'No API key — set OPENAI_API_KEY in .env';
+        }
+        syncLlmToggle();
+    };
+
+    const probeOllama = () => {
+        const url = (els.ollamaUrl.value || '').trim();
+        if (!url) { setOllamaStatus(false, '', ''); return; }
+        fetch('/api/key-status')
+            .then((r) => r.json())
+            .then((d) => setOllamaStatus(d.ollama_reachable, d.ollama_url || url, d.ollama_model))
+            .catch(() => setOllamaStatus(false, url, ''));
+    };
+
+    const switchTab = (backend) => {
+        _activeBackend = backend;
+        els.tabOpenai.classList.toggle('active', backend === 'openai');
+        els.tabOllama.classList.toggle('active', backend === 'ollama');
+        els.panelOpenai.hidden = (backend !== 'openai');
+        els.panelOllama.hidden = (backend !== 'ollama');
+    };
+
+    els.tabOpenai.addEventListener('click', () => switchTab('openai'));
+    els.tabOllama.addEventListener('click', () => switchTab('ollama'));
+    els.ollamaUrl.addEventListener('change', probeOllama);
+    els.ollamaUrl.addEventListener('blur', probeOllama);
+
+    fetch('/api/key-status')
+        .then((r) => r.json())
+        .then((d) => {
+            setApiKeyStatus(d.has_key, d.hint);
+            if (d.ollama_url) {
+                els.ollamaUrl.value = d.ollama_url;
+                els.ollamaModel.value = d.ollama_model || 'llama3.2';
+                setOllamaStatus(d.ollama_reachable, d.ollama_url, d.ollama_model);
+                if (d.ollama_reachable) switchTab('ollama');
+            }
+        })
+        .catch(() => setApiKeyStatus(false, ''));
+
     els.runBtn.addEventListener('click', start);
     els.stopBtn.addEventListener('click', stop);
-    els.enableRag.addEventListener('change', () => {
-        els.ragPill.dataset.state = els.enableRag.checked ? 'on' : 'off';
-        els.ragPill.innerHTML = `RAG <strong>${els.enableRag.checked ? 'On' : 'Off'}</strong>`;
-    });
+
+    const syncLlmToggle = () => {
+        const litOn = els.enableLit.checked;
+        els.useLlm.disabled = !litOn;
+        if (!litOn) els.useLlm.checked = false;
+        els.useLlm.closest('label').style.opacity = litOn ? '' : '0.5';
+        els.llmBackendSection.style.opacity = litOn ? '' : '0.5';
+        setLitState(litOn, litOn && els.useLlm.checked, false);
+    };
+
+    els.enableLit.addEventListener('change', syncLlmToggle);
+    els.useLlm.addEventListener('change', syncLlmToggle);
+
+    syncLlmToggle();
+    renderLitCard();
 })();

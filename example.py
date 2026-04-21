@@ -46,23 +46,20 @@ def main():
     config.beam_search.top_k = 3
     config.beam_search.max_iterations = 5
     
-    # Disable RAG for this simple test (or enable if you have API key)
-    config.rag.enable_rag = False
+    config.literature.enable_literature_search = False
     
-    # Check for OpenAI API key
     if 'OPENAI_API_KEY' in os.environ:
-        print("\n[INFO] OpenAI API key found. RAG can be enabled.")
-        use_rag = input("Enable RAG? (y/n): ").strip().lower() == 'y'
-        config.rag.enable_rag = use_rag
+        print("\n[INFO] OpenAI API key found. Literature search can be enabled.")
+        use_lit = input("Enable literature search? (y/n): ").strip().lower() == 'y'
+        config.literature.enable_literature_search = use_lit
     else:
-        print("\n[INFO] No OpenAI API key found. RAG disabled.")
-        print("[INFO] Set OPENAI_API_KEY environment variable to enable RAG.")
+        print("\n[INFO] No OpenAI API key found. Literature search disabled.")
     
     print(f"\nConfiguration:")
     print(f"  Beam Width: {config.beam_search.beam_width}")
     print(f"  Top K: {config.beam_search.top_k}")
     print(f"  Max Iterations: {config.beam_search.max_iterations}")
-    print(f"  RAG Enabled: {config.rag.enable_rag}")
+    print(f"  Literature Search: {config.literature.enable_literature_search}")
     
     # Create designer
     print("\nInitializing EnergeticDesigner...")

@@ -65,6 +65,20 @@ def generate_molecule_image(smiles: str, size=(200, 200)) -> Optional[str]:
 
 
 def _molecule_payload(mol: MoleculeState, size=(220, 220), mape: Optional[float] = None) -> dict:
+    sources = getattr(mol, 'property_sources', {}) or {}
+    citations = getattr(mol, 'citations', []) or []
+    # Compact per-property origin flag for the UI: 'lit' | 'pred' | 'data'.
+    origin = {}
+    for k, v in sources.items():
+        s = (v or '').lower()
+        if 'analogue' in s:
+            origin[k] = 'ana'
+        elif 'literature' in s:
+            origin[k] = 'lit'
+        elif 'dataset' in s:
+            origin[k] = 'data'
+        else:
+            origin[k] = 'pred'
     return {
         'smiles': mol.smiles,
         'properties': mol.properties,
@@ -72,10 +86,16 @@ def _molecule_payload(mol: MoleculeState, size=(220, 220), mape: Optional[float]
         'score': mol.score,
         'mape': mape,
         'image': generate_molecule_image(mol.smiles, size=size),
+        'property_origin': origin,
+        'property_sources': sources,
+        'citations': citations,
+        'lit_hits': sum(1 for o in origin.values() if o in ('lit', 'ana')),
     }
 
 
-def run_beam_search(target_props, enable_rag, beam_width, top_k, max_iter, mape_threshold_pct):
+def run_beam_search(target_props, enable_rag, use_llm,
+                    ollama_base_url, ollama_model,
+                    beam_width, top_k, max_iter, mape_threshold_pct):
     """Background worker that drives :class:`BeamSearchEngine`."""
     global _current_engine
 
@@ -94,16 +114,18 @@ def run_beam_search(target_props, enable_rag, beam_width, top_k, max_iter, mape_
         config.beam_search.beam_width = beam_width
         config.beam_search.top_k = top_k
         config.beam_search.max_iterations = max_iter
-        # Convergence threshold (in MAPE %) — the orchestrator compares
-        # MAPE-to-MAPE now, so this is directly comparable.
-        config.beam_search.convergence_threshold = float(mape_threshold_pct)
-        config.rag.enable_rag = bool(enable_rag)
+        # UI "MAPE threshold" = absolute target: stop when best MAPE ≤ this.
+        config.beam_search.mape_target = float(mape_threshold_pct)
+        config.literature.enable_literature_search = bool(enable_rag)
+        config.literature.use_llm = bool(use_llm)
+        config.literature.ollama_base_url = ollama_base_url or None
+        config.literature.ollama_model = ollama_model or 'llama3.2'
 
         parent_dir = os.path.join(os.path.dirname(__file__), '..')
         config.system.dataset_path = os.path.join(parent_dir, 'sample_start_molecules.csv')
         config.system.models_directory = os.path.join(parent_dir, 'models')
         config.system.output_directory = os.path.join(parent_dir, 'output')
-        config.rag.cache_path = os.path.join(config.system.output_directory, 'rag_cache.sqlite')
+        config.literature.cache_path = os.path.join(config.system.output_directory, 'literature_cache.sqlite')
 
         designer = EnergeticDesigner(target, config)
 
@@ -117,6 +139,24 @@ def run_beam_search(target_props, enable_rag, beam_width, top_k, max_iter, mape_
 
         engine = BeamSearchEngine(config, target)
         _current_engine = engine
+
+        if engine.literature_retriever is not None and engine.literature_retriever.cache is not None:
+            engine.literature_retriever.cache.clear()
+            engine.literature_retriever._analogue_mem.clear()
+
+        has_openai = bool(config.literature.openai_api_key)
+        has_ollama = bool(config.literature.ollama_base_url)
+        llm_available = has_openai or has_ollama
+        backend = ('ollama' if has_ollama else 'openai') if llm_available else 'none'
+        progress_queue.put({
+            'type': 'literature_status',
+            'enabled': bool(config.literature.enable_literature_search and engine.literature_retriever is not None),
+            'use_llm': bool(config.literature.use_llm and llm_available),
+            'llm_analogue': llm_available,
+            'llm_backend': backend,
+            'ollama_model': config.literature.ollama_model if has_ollama else '',
+            'cache_path': config.literature.cache_path,
+        })
 
         # --- Callback wiring ----------------------------------------------
 
@@ -197,6 +237,12 @@ def start_search():
         'hf': float(data.get('hf', 100)),
     }
     enable_rag = bool(data.get('enable_rag', True))
+    use_llm = bool(data.get('use_llm', False))
+    ollama_base_url = str(data.get('ollama_base_url', '') or '').strip()
+    if ollama_base_url and not ollama_base_url.startswith(('http://', 'https://')):
+        ollama_base_url = 'http://' + ollama_base_url
+    ollama_base_url = ollama_base_url or None
+    ollama_model = str(data.get('ollama_model', '') or '').strip() or 'llama3.2'
     beam_width = int(data.get('beam_width', 10))
     top_k = int(data.get('top_k', 5))
     max_iter = int(data.get('max_iter', 10))
@@ -204,13 +250,50 @@ def start_search():
 
     thread = threading.Thread(
         target=run_beam_search,
-        args=(target_props, enable_rag, beam_width, top_k, max_iter, mape_threshold_pct),
+        args=(target_props, enable_rag, use_llm,
+              ollama_base_url, ollama_model,
+              beam_width, top_k, max_iter, mape_threshold_pct),
         daemon=True,
     )
     thread.start()
     _current_thread = thread
 
     return jsonify({'status': 'started'})
+
+
+@app.route('/api/key-status')
+def key_status():
+    """Report LLM backend availability without exposing secrets."""
+    from config import Config
+    cfg = Config()
+    key = cfg.literature.openai_api_key or os.getenv('OPENAI_API_KEY') or ''
+    has_key = bool(key.strip())
+    hint = (key[:4] + '…') if has_key else ''
+
+    ollama_url = cfg.literature.ollama_base_url or os.getenv('OLLAMA_BASE_URL') or ''
+    ollama_model = cfg.literature.ollama_model or os.getenv('OLLAMA_MODEL') or 'llama3.2'
+
+    # Quick reachability probe for Ollama (non-blocking, short timeout).
+    ollama_reachable = False
+    if ollama_url:
+        try:
+            import urllib.request
+            normalized = ollama_url.strip().rstrip('/')
+            if not normalized.startswith(('http://', 'https://')):
+                normalized = 'http://' + normalized
+            probe = normalized + '/api/tags'
+            req = urllib.request.urlopen(probe, timeout=2)
+            ollama_reachable = req.status == 200
+        except Exception:
+            ollama_reachable = False
+
+    return jsonify({
+        'has_key': has_key,
+        'hint': hint,
+        'ollama_url': ollama_url,
+        'ollama_model': ollama_model,
+        'ollama_reachable': ollama_reachable,
+    })
 
 
 @app.route('/api/stop', methods=['POST'])

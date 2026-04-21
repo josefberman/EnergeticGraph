@@ -929,20 +929,18 @@ class PropertyExtractor:
         'kcal/mol': 4.184,  # kcal/mol to kJ/mol
     }
     
-    def __init__(self, use_llm: bool = False, llm_api_key: str = None, use_chunking: bool = True):
-        """
-        Initialize extractor.
-        
-        Args:
-            use_llm: Whether to use LLM for complex extraction
-            llm_api_key: OpenAI API key for LLM extraction
-            use_chunking: Whether to use embedding-based chunk retrieval
-        """
+    def __init__(self, use_llm: bool = False, llm_api_key: str = None,
+                 use_chunking: bool = True,
+                 ollama_base_url: Optional[str] = None,
+                 ollama_model: Optional[str] = None):
         self.llm_api_key = llm_api_key or os.getenv('OPENAI_API_KEY')
-        # Only enable LLM extraction if both flag AND key are present.
-        self.use_llm = bool(use_llm and self.llm_api_key)
-        if use_llm and not self.llm_api_key:
-            logger.warning("LLM extraction requested but OPENAI_API_KEY is not set; disabling.")
+        self.ollama_base_url = ollama_base_url or os.getenv('OLLAMA_BASE_URL')
+        self.ollama_model = ollama_model or os.getenv('OLLAMA_MODEL', 'llama3.2')
+
+        has_backend = bool(self.ollama_base_url or self.llm_api_key)
+        self.use_llm = bool(use_llm and has_backend)
+        if use_llm and not has_backend:
+            logger.warning("LLM extraction requested but no API key or Ollama URL configured; disabling.")
         self.use_chunking = use_chunking
         
         # Initialize chunker and retriever for full-text processing
@@ -1221,10 +1219,11 @@ class PropertyExtractor:
         }
         
         try:
-            import openai
-            
-            client = openai.OpenAI(api_key=self.llm_api_key)
-            
+            client, model = _make_llm_client(
+                self.llm_api_key, self.ollama_base_url, self.ollama_model)
+            if client is None:
+                return properties
+
             prompt = f"""Extract energetic material properties for "{chemical_name}" from the following text.
 
 Text:
@@ -1245,16 +1244,18 @@ Return ONLY a JSON object with these exact keys (use null if not found):
 JSON response:"""
 
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0,
                 max_tokens=200
             )
             
-            result_text = response.choices[0].message.content.strip()
-            
-            # Parse JSON from response
-            json_match = re.search(r'\{[^}]+\}', result_text)
+            result_text = response.choices[0].message.content or ''
+            # Strip <think>...</think> blocks before searching for JSON.
+            result_text = re.sub(r'<think>.*?</think>', '', result_text,
+                                 flags=re.DOTALL).strip()
+            # Match the outermost {...} object (handles nested keys).
+            json_match = re.search(r'\{[^{}]*\}', result_text)
             if json_match:
                 data = json.loads(json_match.group())
                 
@@ -1280,6 +1281,38 @@ JSON response:"""
         return properties
 
 
+def _make_llm_client(openai_api_key: Optional[str],
+                     ollama_base_url: Optional[str],
+                     ollama_model: Optional[str]):
+    """Return (client, model_name) for whichever LLM backend is configured.
+
+    Ollama takes priority if ``ollama_base_url`` is set.
+    Ollama exposes an OpenAI-compatible ``/v1`` endpoint so we reuse the
+    ``openai`` SDK with a custom ``base_url``.
+    Returns (None, None) when neither backend is configured.
+    """
+    try:
+        import openai
+    except ImportError:
+        return None, None
+
+    if ollama_base_url:
+        base = ollama_base_url.strip().rstrip('/')
+        # Ensure scheme is present — openai SDK requires an absolute URL.
+        if not base.startswith(('http://', 'https://')):
+            base = 'http://' + base
+        if not base.endswith('/v1'):
+            base = f"{base}/v1"
+        client = openai.OpenAI(base_url=base, api_key='ollama')
+        model = ollama_model or 'llama3.2'
+        return client, model
+
+    if openai_api_key:
+        return openai.OpenAI(api_key=openai_api_key), 'gpt-4o-mini'
+
+    return None, None
+
+
 class RAGPropertyRetriever:
     """
     Main RAG module that orchestrates SMILES-to-name conversion,
@@ -1291,7 +1324,9 @@ class RAGPropertyRetriever:
                  max_papers: int = 10,
                  timeout: int = 15,
                  openai_api_key: Optional[str] = None,
-                 cache_path: Optional[str] = None):
+                 cache_path: Optional[str] = None,
+                 ollama_base_url: Optional[str] = None,
+                 ollama_model: Optional[str] = None):
         """
         Initialize RAG retriever.
 
@@ -1301,12 +1336,34 @@ class RAGPropertyRetriever:
             timeout: API timeout in seconds
             openai_api_key: OpenAI API key (falls back to OPENAI_API_KEY env var)
             cache_path: Optional SQLite cache path; disables caching if None
+            ollama_base_url: Base URL of a local Ollama server, e.g.
+                             "http://localhost:11434".  Takes priority over
+                             openai_api_key when set.
+            ollama_model: Model tag to use with Ollama (default: llama3.2)
         """
         self.name_converter = SMILESToNameConverter(timeout=timeout)
         self.searcher = LiteratureSearcher(max_results=max_papers, timeout=timeout)
-        self.extractor = PropertyExtractor(use_llm=use_llm, llm_api_key=openai_api_key)
-
+        # Resolve backends once: explicit args beat env vars.
+        self._openai_api_key: Optional[str] = (
+            openai_api_key or os.getenv('OPENAI_API_KEY') or None
+        )
+        self._ollama_base_url: Optional[str] = (
+            ollama_base_url or os.getenv('OLLAMA_BASE_URL') or None
+        )
+        self._ollama_model: str = (
+            ollama_model or os.getenv('OLLAMA_MODEL') or 'llama3.2'
+        )
+        self.extractor = PropertyExtractor(
+            use_llm=use_llm,
+            llm_api_key=self._openai_api_key,
+            ollama_base_url=self._ollama_base_url,
+            ollama_model=self._ollama_model,
+        )
         self.use_llm = self.extractor.use_llm
+
+        # In-process analogue cache: avoids re-downloading within a single run.
+        # { norm_name -> (properties_dict, citations_list, papers_searched) }
+        self._analogue_mem: dict = {}
 
         self.cache = None
         if cache_path:
@@ -1448,6 +1505,20 @@ class RAGPropertyRetriever:
                 )
                 citations.append(citation)
         
+        # Step 4: Analogue fallback — if some properties are still missing,
+        # search literature for the most similar known energetic compounds.
+        missing = [k for k, v in properties.items() if v is None]
+        if missing:
+            analogue_props, analogue_cites, analogues_searched = \
+                self._search_analogues(smiles, chemical_name, missing)
+            papers_searched += analogues_searched
+            for prop_name, prop_value in analogue_props.items():
+                if properties.get(prop_name) is None and prop_value is not None:
+                    properties[prop_name] = prop_value
+            if analogue_cites:
+                citations.extend(analogue_cites)
+                papers_with_hits += len(analogue_cites)
+
         result = RAGResult(
             smiles=smiles,
             chemical_name=chemical_name,
@@ -1456,12 +1527,10 @@ class RAGPropertyRetriever:
             papers_with_hits=papers_with_hits,
             citations=citations
         )
-        
-        # Log summary
+
         found_props = [k for k, v in properties.items() if v is not None]
         logger.info(f"RAG found {len(found_props)}/4 properties: {found_props}")
-        
-        # Print summary to CLI (only when we searched - i.e., had a chemical name)
+
         if found_props:
             print(f"found {len(found_props)} properties!")
             print(f"            ✅ Literature values: {', '.join(found_props)}")
@@ -1472,6 +1541,308 @@ class RAGPropertyRetriever:
             self.cache.put(smiles, result)
 
         return result
+
+    def _suggest_analogues_via_llm(self, smiles: str,
+                                    chemical_name: Optional[str],
+                                    top_k: int = 3) -> List[Tuple[str, str]]:
+        """Ask the LLM to name known energetic compounds structurally similar to
+        this molecule. Returns a list of (common_name, rationale) pairs.
+
+        Always uses ``gpt-4o-mini`` and is gated on ``self.extractor.llm_api_key``
+        — independent of the ``use_llm`` property-extraction flag so that
+        analogue lookup works cheaply even when LLM extraction is off.
+        """
+        try:
+            client, model = _make_llm_client(
+                self._openai_api_key, self._ollama_base_url, self._ollama_model)
+            if client is None:
+                return []
+
+            display_name = chemical_name or smiles
+
+            # Derive a human-readable structural summary for the system prompt
+            # so the model can reason about functional groups without re-parsing SMILES.
+            system = (
+                "You are a world-leading expert in energetic materials chemistry "
+                "with deep knowledge of synthesis, crystal structures, and detonation "
+                "physics. You can read SMILES fluently and reason about functional "
+                "groups, ring systems, and substituent effects on detonation properties."
+            )
+
+            prompt = f"""A novel energetic compound has been designed:
+
+  SMILES : {smiles}
+  Name   : {display_name}
+
+This compound has no direct literature entry.  Your task is to identify the
+{top_k} *most structurally similar* known energetic compounds that:
+  1. Have experimentally measured detonation properties (density ρ, detonation
+     velocity D, detonation pressure P_CJ, and/or heat of formation ΔHf) published
+     in peer-reviewed journals or technical reports.
+  2. Share as many of the following features as possible with the target:
+       • Same or closely related ring system / cage scaffold
+       • Same nitrogen-containing functional groups (N-NO₂, O-NO₂, C-NO₂, N₃, C=N,
+         tetrazole, triazole, furazan, tetrazine, oxetane, etc.)
+       • Similar N/O balance and oxygen balance
+       • Similar molecular size (atom count within ±30 %)
+       • Same heteroatom substitution pattern (halogen, azide, amino, etc.)
+  3. Are primarily known by a short common name or acronym used in the explosives
+     literature (e.g. RDX, HMX, CL-20, TATB, FOX-7, NTO, ADN, PETN).
+
+Ranking rules (most important first):
+  a. Maximise the number of shared structural motifs listed above.
+  b. Prefer same scaffold/ring over same substituents.
+  c. Include exotic or lesser-known compounds (e.g. TNAZ, TEX, BCHMX, DINGU,
+     LLM-105, FOX-12, TKX-50, CL-14, MAD-X1, DNTF, BTATz, BTF, DAAF, ADN,
+     FEFO, BNFF, NTO, ANTA) if they are genuinely closer than the common RDX/HMX.
+  d. Do NOT default to RDX and HMX if a structurally tighter match exists.
+
+For each compound return:
+  "name"       — the primary acronym or common name as used in search engines
+  "reason"     — one sentence listing the specific shared features (ring size,
+                  functional groups, N-count, etc.)
+  "similarity" — your estimated structural similarity 0-1 (1 = identical)
+
+Respond with ONLY a JSON array, no prose, no markdown fences:
+[
+  {{"name": "HMX", "reason": "8-membered nitramine ring with 4 N-NO2 groups, same scaffold as the target", "similarity": 0.72}},
+  {{"name": "TNAZ", "reason": "cyclic nitramine with gem-dinitro group and 4-membered ring", "similarity": 0.55}}
+]"""
+
+            def _call(messages):
+                return client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=0.1,
+                    max_tokens=500,
+                )
+
+            response = _call([
+                {'role': 'system', 'content': system},
+                {'role': 'user', 'content': prompt},
+            ])
+            choice = response.choices[0]
+            finish = getattr(choice, 'finish_reason', 'unknown')
+            raw = (choice.message.content or '').strip()
+
+            if not raw:
+                logger.warning(
+                    f"LLM analogue suggestion: empty response "
+                    f"(finish_reason={finish!r}) — likely content filter. "
+                    "Retrying with neutral chemistry prompt.")
+                neutral = (
+                    f"You are a computational chemist specialising in "
+                    f"nitrogen-rich heterocyclic compounds and dense organic crystals.\n\n"
+                    f"Molecule SMILES: {smiles}\n"
+                    f"IUPAC name: {display_name}\n\n"
+                    f"List the {top_k} most structurally similar *well-characterised* "
+                    f"reference compounds from academic literature for which crystal "
+                    f"density, heat of formation, and Chapman-Jouguet parameters are "
+                    f"published. Prioritise shared scaffold (ring size, cage motif), "
+                    f"then functional groups (N-NO₂, O-NO₂, C-NO₂, azide, tetrazole, "
+                    f"triazole, furazan, tetrazine). Prefer close but less-obvious "
+                    f"matches over defaulting to RDX/HMX when a tighter analogue exists.\n\n"
+                    f"Reply ONLY with a JSON array, no prose:\n"
+                    f'[{{"name":"<acronym>","reason":"<shared features>","similarity":<0-1>}}]'
+                )
+                response = _call([{'role': 'user', 'content': neutral}])
+                choice = response.choices[0]
+                finish = getattr(choice, 'finish_reason', 'unknown')
+                raw = (choice.message.content or '').strip()
+                if not raw:
+                    logger.warning(
+                        f"LLM analogue suggestion: still empty after retry "
+                        f"(finish_reason={finish!r}). Falling back to static library.")
+                    return []
+
+            # Strip <think>…</think> reasoning blocks (Qwen, DeepSeek, etc.)
+            raw = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL)
+            arr_match = re.search(r'\[.*?\]', raw, re.DOTALL)
+            if not arr_match:
+                logger.warning(
+                    f"LLM analogue suggestion: no JSON array "
+                    f"(finish_reason={finish!r}). "
+                    f"Raw (first 400 chars): {raw[:400]!r}")
+                return []
+            text = arr_match.group(0)
+            data = json.loads(text)
+            results = []
+            for item in data:
+                name = str(item.get('name', '')).strip()
+                reason = str(item.get('reason', '')).strip()
+                # Clamp model-provided similarity to [0.1, 1.0].
+                try:
+                    sim = float(item.get('similarity', 0.75))
+                    sim = max(0.1, min(1.0, sim))
+                except (TypeError, ValueError):
+                    sim = 0.75
+                if name:
+                    results.append((name, reason, sim))
+            logger.info(f"LLM suggested analogues: "
+                        f"{[(n, f'{s:.2f}') for n, _, s in results]}")
+            return results[:top_k]
+        except Exception as e:
+            logger.warning(f"LLM analogue suggestion failed: {e}")
+            return []
+
+    def _search_analogues(self, smiles: str, chemical_name: Optional[str],
+                          missing_props: List[str],
+                          top_k: int = 3,
+                          conf_penalty: float = 0.5,
+                          ) -> Tuple[Dict[str, 'RetrievedProperty'],
+                                     List['PaperCitation'], int]:
+        """Analogue-fallback pipeline.
+
+        1. If an OpenAI key is present, ask the LLM to suggest known analogues.
+        2. Otherwise fall back to Tanimoto nearest-neighbours from the static
+           library in energetic_library.py.
+
+        Property values from analogues get confidence multiplied by
+        ``analogue_similarity ** conf_penalty`` so the XGBoost predictor can
+        outrank very weak analogue evidence.
+        """
+        # --- Step 1: resolve analogue list -----------------------------------
+        # Each entry: (display_name, similarity_score, source_tag)
+        candidate_names: List[Tuple[str, float, str]] = []
+
+        llm_suggestions = self._suggest_analogues_via_llm(smiles, chemical_name, top_k)
+        if llm_suggestions:
+            print(f"         🤖 LLM suggested analogues: "
+                  f"{', '.join(f'{n} ({s:.2f})' for n, _, s in llm_suggestions)}",
+                  flush=True)
+            for name, reason, sim in llm_suggestions:
+                candidate_names.append((name, sim, f"LLM sim={sim:.2f} ({reason[:55]})"))
+        else:
+            # Static Tanimoto fallback
+            try:
+                from .energetic_library import find_similar
+                for compound, tanimoto in find_similar(smiles, top_k=top_k,
+                                                       min_tanimoto=0.30):
+                    candidate_names.append(
+                        (compound.name, tanimoto,
+                         f"Tanimoto={tanimoto:.2f}"))
+            except Exception as e:
+                logger.debug(f"Static library fallback failed: {e}")
+
+        if not candidate_names:
+            return {}, [], 0
+
+        # --- Step 2: search + extract for each analogue ----------------------
+        filled: Dict[str, RetrievedProperty] = {}
+        analogue_citations: List[PaperCitation] = []
+        papers_searched = 0
+        still_missing = list(missing_props)
+
+        for analogue_name, similarity, source_tag in candidate_names:
+            if not still_missing:
+                break
+
+            norm = analogue_name.strip().lower()
+
+            # --- Cache lookup (memory first, then SQLite) --------------------
+            cached = self._analogue_mem.get(norm)
+            if cached is None and self.cache is not None:
+                cached = self.cache.get_analogue(analogue_name)
+                if cached is not None:
+                    self._analogue_mem[norm] = cached  # promote to memory
+
+            if cached is not None:
+                cached_props, cached_cites, cached_n = cached
+                print(f"         💾 Analogue cache hit: {analogue_name} "
+                      f"({len(cached_props)} props)", flush=True)
+                papers_searched += cached_n
+                for prop_name in list(still_missing):
+                    pv = cached_props.get(prop_name)
+                    if pv is None:
+                        continue
+                    scaled_conf = max(0.01,
+                                     pv.confidence * (similarity ** conf_penalty))
+                    existing = filled.get(prop_name)
+                    if existing is not None and existing.confidence >= scaled_conf:
+                        continue
+                    filled[prop_name] = RetrievedProperty(
+                        value=pv.value,
+                        source=pv.source,
+                        confidence=scaled_conf,
+                    )
+                for c in cached_cites:
+                    if c not in analogue_citations:
+                        analogue_citations.append(c)
+                still_missing = [p for p in still_missing if p not in filled]
+                if filled:
+                    print(f"            ✅ {analogue_name} (cached): "
+                          f"{', '.join(sorted(filled.keys()))}")
+                continue
+
+            # --- Cache miss: fetch from literature ---------------------------
+            print(f"         🔗 Analogue: {analogue_name} [{source_tag}] "
+                  f"→ searching literature…", flush=True)
+            papers = self.searcher.search(analogue_name, None)
+            n_papers = len(papers)
+            papers_searched += n_papers
+
+            raw_props: Dict[str, RetrievedProperty] = {}
+            raw_cites: List[PaperCitation] = []
+
+            for paper in papers:
+                text = paper.get('text', '')
+                if not text:
+                    continue
+                title = paper.get('title', '')
+                is_full_text = paper.get('has_full_text', False)
+                extracted = self.extractor.extract_from_text(
+                    text, analogue_name, is_full_text=is_full_text)
+
+                hits_here: List[str] = []
+                for prop_name, pv in extracted.items():
+                    if pv is None:
+                        continue
+                    existing = raw_props.get(prop_name)
+                    if existing is None or pv.confidence > existing.confidence:
+                        raw_props[prop_name] = RetrievedProperty(
+                            value=pv.value,
+                            source=f"analogue: {analogue_name} [{source_tag}] — {title[:40]}",
+                            confidence=pv.confidence,
+                        )
+                        hits_here.append(prop_name)
+
+                if hits_here:
+                    raw_cites.append(PaperCitation(
+                        title=f"[Analogue {analogue_name}] {title}",
+                        authors=paper.get('authors', []),
+                        doi=paper.get('doi', ''),
+                        source_db=paper.get('source', 'Unknown'),
+                        properties_found=hits_here,
+                    ))
+
+            # Store in both caches so the next candidate skips the download.
+            self._analogue_mem[norm] = (raw_props, raw_cites, n_papers)
+            if self.cache is not None:
+                self.cache.put_analogue(analogue_name, raw_props,
+                                        raw_cites, n_papers)
+
+            # Merge into filled with similarity-scaled confidence.
+            for prop_name in list(still_missing):
+                pv = raw_props.get(prop_name)
+                if pv is None:
+                    continue
+                scaled_conf = max(0.01, pv.confidence * (similarity ** conf_penalty))
+                existing = filled.get(prop_name)
+                if existing is not None and existing.confidence >= scaled_conf:
+                    continue
+                filled[prop_name] = RetrievedProperty(
+                    value=pv.value,
+                    source=pv.source,
+                    confidence=scaled_conf,
+                )
+            analogue_citations.extend(raw_cites)
+
+            still_missing = [p for p in still_missing if p not in filled]
+            if filled:
+                print(f"            ✅ {analogue_name} filled: "
+                      f"{', '.join(sorted(filled.keys()))}")
+
+        return filled, analogue_citations, papers_searched
 
 
 def get_properties_with_rag(smiles: str, 

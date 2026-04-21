@@ -35,10 +35,10 @@ load_dotenv()
 # Suppress verbose logging
 logging.basicConfig(level=logging.WARNING)
 
-from modules.rag_retrieval import (
-    RAGPropertyRetriever, 
+from modules.literature_search import (
+    LiteraturePropertyRetriever,
     SMILESToNameConverter,
-    LiteratureSearcher,
+    AcademicSearcher,
     PropertyExtractor,
     RetrievedProperty
 )
@@ -501,7 +501,7 @@ def calculate_std(values: List[float]) -> float:
 def evaluate_material(
     ground_truth: GroundTruth,
     name_converter: SMILESToNameConverter,
-    searcher: LiteratureSearcher,
+    searcher: AcademicSearcher,
     extractor: PropertyExtractor,
     num_papers: int = 10
 ) -> MaterialEvaluation:
@@ -747,7 +747,7 @@ def run_evaluation(output_dir: str = "evaluation/results", num_papers: int = 10)
     # Initialize components
     print("   🔧 Initializing RAG components...")
     name_converter = SMILESToNameConverter(timeout=15)
-    searcher = LiteratureSearcher(max_results=num_papers, timeout=15)
+    searcher = AcademicSearcher(max_results=num_papers, timeout=15)
     extractor = PropertyExtractor(use_llm=use_llm)
     
     # Run evaluation on all materials
