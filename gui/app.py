@@ -119,7 +119,7 @@ def run_beam_search(target_props, enable_rag, use_llm,
         config.literature.enable_literature_search = bool(enable_rag)
         config.literature.use_llm = bool(use_llm)
         config.literature.ollama_base_url = ollama_base_url or None
-        config.literature.ollama_model = ollama_model or 'llama3.2'
+        config.literature.ollama_model = ollama_model or 'ALIENTELLIGENCE/chemicalengineer'
 
         parent_dir = os.path.join(os.path.dirname(__file__), '..')
         config.system.dataset_path = os.path.join(parent_dir, 'sample_start_molecules.csv')
@@ -242,7 +242,7 @@ def start_search():
     if ollama_base_url and not ollama_base_url.startswith(('http://', 'https://')):
         ollama_base_url = 'http://' + ollama_base_url
     ollama_base_url = ollama_base_url or None
-    ollama_model = str(data.get('ollama_model', '') or '').strip() or 'llama3.2'
+    ollama_model = str(data.get('ollama_model', '') or '').strip() or 'ALIENTELLIGENCE/chemicalengineer'
     beam_width = int(data.get('beam_width', 10))
     top_k = int(data.get('top_k', 5))
     max_iter = int(data.get('max_iter', 10))
@@ -271,7 +271,7 @@ def key_status():
     hint = (key[:4] + '…') if has_key else ''
 
     ollama_url = cfg.literature.ollama_base_url or os.getenv('OLLAMA_BASE_URL') or ''
-    ollama_model = cfg.literature.ollama_model or os.getenv('OLLAMA_MODEL') or 'llama3.2'
+    ollama_model = cfg.literature.ollama_model or os.getenv('OLLAMA_MODEL') or 'ALIENTELLIGENCE/chemicalengineer'
 
     # Quick reachability probe for Ollama (non-blocking, short timeout).
     ollama_reachable = False

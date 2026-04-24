@@ -935,7 +935,7 @@ class PropertyExtractor:
                  ollama_model: Optional[str] = None):
         self.llm_api_key = llm_api_key or os.getenv('OPENAI_API_KEY')
         self.ollama_base_url = ollama_base_url or os.getenv('OLLAMA_BASE_URL')
-        self.ollama_model = ollama_model or os.getenv('OLLAMA_MODEL', 'llama3.2')
+        self.ollama_model = ollama_model or os.getenv('OLLAMA_MODEL', 'ALIENTELLIGENCE/chemicalengineer')
 
         has_backend = bool(self.ollama_base_url or self.llm_api_key)
         self.use_llm = bool(use_llm and has_backend)
@@ -1304,7 +1304,7 @@ def _make_llm_client(openai_api_key: Optional[str],
         if not base.endswith('/v1'):
             base = f"{base}/v1"
         client = openai.OpenAI(base_url=base, api_key='ollama')
-        model = ollama_model or 'llama3.2'
+        model = ollama_model or 'ALIENTELLIGENCE/chemicalengineer'
         return client, model
 
     if openai_api_key:
@@ -1339,7 +1339,7 @@ class RAGPropertyRetriever:
             ollama_base_url: Base URL of a local Ollama server, e.g.
                              "http://localhost:11434".  Takes priority over
                              openai_api_key when set.
-            ollama_model: Model tag to use with Ollama (default: llama3.2)
+            ollama_model: Model tag to use with Ollama (default: ALIENTELLIGENCE/chemicalengineer)
         """
         self.name_converter = SMILESToNameConverter(timeout=timeout)
         self.searcher = LiteratureSearcher(max_results=max_papers, timeout=timeout)
@@ -1351,7 +1351,7 @@ class RAGPropertyRetriever:
             ollama_base_url or os.getenv('OLLAMA_BASE_URL') or None
         )
         self._ollama_model: str = (
-            ollama_model or os.getenv('OLLAMA_MODEL') or 'llama3.2'
+            ollama_model or os.getenv('OLLAMA_MODEL') or 'ALIENTELLIGENCE/chemicalengineer'
         )
         self.extractor = PropertyExtractor(
             use_llm=use_llm,

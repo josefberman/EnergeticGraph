@@ -647,7 +647,7 @@ def _make_llm_client(openai_api_key: Optional[str],
             base = 'http://' + base
         if not base.endswith('/v1'):
             base = f"{base}/v1"
-        return openai.OpenAI(base_url=base, api_key='ollama'), (ollama_model or 'llama3.2')
+        return openai.OpenAI(base_url=base, api_key='ollama'), (ollama_model or 'ALIENTELLIGENCE/chemicalengineer')
 
     if openai_api_key:
         return openai.OpenAI(api_key=openai_api_key), 'gpt-4o-mini'
@@ -726,7 +726,7 @@ class PropertyExtractor:
                  ollama_model: Optional[str] = None):
         self.llm_api_key = llm_api_key or os.getenv('OPENAI_API_KEY')
         self.ollama_base_url = ollama_base_url or os.getenv('OLLAMA_BASE_URL')
-        self.ollama_model = ollama_model or os.getenv('OLLAMA_MODEL', 'llama3.2')
+        self.ollama_model = ollama_model or os.getenv('OLLAMA_MODEL', 'ALIENTELLIGENCE/chemicalengineer')
         has_backend = bool(self.ollama_base_url or self.llm_api_key)
         self.use_llm = bool(use_llm and has_backend)
         if use_llm and not has_backend:
@@ -763,7 +763,7 @@ class LiteraturePropertyRetriever:
 
         self._openai_api_key = openai_api_key or os.getenv('OPENAI_API_KEY') or None
         self._ollama_base_url = ollama_base_url or os.getenv('OLLAMA_BASE_URL') or None
-        self._ollama_model = ollama_model or os.getenv('OLLAMA_MODEL') or 'llama3.2'
+        self._ollama_model = ollama_model or os.getenv('OLLAMA_MODEL') or 'ALIENTELLIGENCE/chemicalengineer'
 
         self.extractor = PropertyExtractor(
             use_llm=use_llm,

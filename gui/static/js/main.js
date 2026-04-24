@@ -294,7 +294,7 @@
             use_llm: els.enableLit.checked && els.useLlm.checked,
             ollama_base_url: _activeBackend === 'ollama'
                 ? (els.ollamaUrl.value || '').trim() : '',
-            ollama_model: (els.ollamaModel.value || 'llama3.2').trim(),
+            ollama_model: (els.ollamaModel.value || 'ALIENTELLIGENCE/chemicalengineer').trim(),
         };
 
         state.maxIter = payload.max_iter;
@@ -500,7 +500,7 @@
         if (reachable) {
             el.dataset.state = 'present';
             el.querySelector('.api-key-label').textContent =
-                `Reachable · model: ${model || 'llama3.2'}`;
+                `Reachable · model: ${model || 'ALIENTELLIGENCE/chemicalengineer'}`;
         } else {
             el.dataset.state = 'missing';
             el.querySelector('.api-key-label').textContent =
@@ -550,7 +550,7 @@
             setApiKeyStatus(d.has_key, d.hint);
             if (d.ollama_url) {
                 els.ollamaUrl.value = d.ollama_url;
-                els.ollamaModel.value = d.ollama_model || 'llama3.2';
+                els.ollamaModel.value = d.ollama_model || 'ALIENTELLIGENCE/chemicalengineer';
                 setOllamaStatus(d.ollama_reachable, d.ollama_url, d.ollama_model);
                 if (d.ollama_reachable) switchTab('ollama');
             }

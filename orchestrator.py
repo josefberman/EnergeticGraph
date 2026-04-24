@@ -40,7 +40,7 @@ class BeamSearchEngine:
                 openai_api_key=config.literature.openai_api_key,
                 cache_path=config.literature.cache_path,
                 ollama_base_url=getattr(config.literature, 'ollama_base_url', None),
-                ollama_model=getattr(config.literature, 'ollama_model', 'llama3.2'),
+                ollama_model=getattr(config.literature, 'ollama_model', 'ALIENTELLIGENCE/chemicalengineer'),
             )
             logger.info("BeamSearchEngine: shared literature retriever initialized")
 

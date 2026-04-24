@@ -75,7 +75,7 @@ class LiteratureSearchConfig:
         default_factory=lambda: os.getenv('OLLAMA_BASE_URL')
     )
     ollama_model: str = field(
-        default_factory=lambda: os.getenv('OLLAMA_MODEL', 'llama3.2')
+        default_factory=lambda: os.getenv('OLLAMA_MODEL', 'ALIENTELLIGENCE/chemicalengineer')
     )
 
 
