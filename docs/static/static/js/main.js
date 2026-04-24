@@ -1,28 +1,33 @@
 /* Energetic Designer — vanilla JS front-end for the Flask SSE backend.
-   On static hosts (e.g. GitHub Pages), set API base via ?api= URL, localStorage
-   key emgApiBase, or window.EMG_API_BASE (e.g. http://127.0.0.1:5001). */
+ * When the UI is served from GitHub Pages, set the Flask backend base URL
+ * (query: ?api=https://host, meta emds-api-base, or localStorage emds_api_base).
+ */
 
 (() => {
     const $ = (id) => document.getElementById(id);
 
-    const getApiBase = () => {
-        try {
-            const q = new URLSearchParams(window.location.search).get('api');
-            if (q) return q.replace(/\/$/, '');
-            const s = localStorage.getItem('emgApiBase');
-            if (s) return s.replace(/\/$/, '');
-        } catch (_) { /* */ }
-        if (typeof window !== 'undefined' && window.EMG_API_BASE) {
-            return String(window.EMG_API_BASE).replace(/\/$/, '');
+    function resolveApiBase() {
+        const q = new URLSearchParams(location.search).get('api');
+        if (q) return q.trim().replace(/\/$/, '');
+        const meta = document.querySelector('meta[name="emds-api-base"]');
+        if (meta && meta.getAttribute('content') && meta.getAttribute('content').trim()) {
+            return meta.getAttribute('content').trim().replace(/\/$/, '');
         }
+        const inp = document.getElementById('api-base');
+        if (inp && inp.value && inp.value.trim()) {
+            return inp.value.trim().replace(/\/$/, '');
+        }
+        const ls = localStorage.getItem('emds_api_base');
+        if (ls) return ls.trim().replace(/\/$/, '');
         return '';
-    };
+    }
 
-    const apiUrl = (path) => {
-        const b = getApiBase();
-        if (!b) return path;
-        return b + (path.startsWith('/') ? path : `/${path}`);
-    };
+    function apiUrl(path) {
+        const base = resolveApiBase();
+        if (!base) return path;
+        if (path.startsWith('/')) return `${base}${path}`;
+        return `${base}/${path}`;
+    }
 
     const state = {
         es: null,
@@ -565,6 +570,13 @@
     els.ollamaUrl.addEventListener('change', probeOllama);
     els.ollamaUrl.addEventListener('blur', probeOllama);
 
+    const apiBaseWrap = $('api-base-wrap');
+    const apiBaseInput = $('api-base');
+    const apiBaseSave = $('api-base-save');
+    if (apiBaseInput && localStorage.getItem('emds_api_base')) {
+        apiBaseInput.value = localStorage.getItem('emds_api_base');
+    }
+
     fetch(apiUrl('/api/key-status'))
         .then((r) => r.json())
         .then((d) => {
@@ -578,24 +590,12 @@
         })
         .catch(() => setApiKeyStatus(false, ''));
 
-    const apiBaseInput = $('api-base');
-    const apiBaseSave = $('api-base-save');
-    if (apiBaseInput) {
-        const s = (() => {
-            try {
-                return localStorage.getItem('emgApiBase') || '';
-            } catch (_) { return ''; }
-        })();
-        if (s) apiBaseInput.value = s;
-    }
+    // GitHub Pages: show backend URL field
     if (apiBaseSave && apiBaseInput) {
         apiBaseSave.addEventListener('click', () => {
-            const v = (apiBaseInput.value || '').trim().replace(/\/$/, '');
-            try {
-                if (v) localStorage.setItem('emgApiBase', v);
-                else localStorage.removeItem('emgApiBase');
-            } catch (_) { /* */ }
-            setStatus('API base saved. You can start optimization.', '');
+            const v = apiBaseInput.value.trim().replace(/\/$/, '');
+            if (v) localStorage.setItem('emds_api_base', v);
+            else localStorage.removeItem('emds_api_base');
             fetch(apiUrl('/api/key-status'))
                 .then((r) => r.json())
                 .then((d) => {
@@ -606,8 +606,13 @@
                         setOllamaStatus(d.ollama_reachable, d.ollama_url, d.ollama_model);
                     }
                 })
-                .catch(() => setApiKeyStatus(false, ''));
+                .catch(() => setStatus('Could not reach backend at this URL.', 'error'));
         });
+    }
+    if (apiBaseWrap) {
+        const showRemote = location.hostname.includes('github.io')
+            || new URLSearchParams(location.search).has('api');
+        apiBaseWrap.hidden = !showRemote;
     }
 
     els.runBtn.addEventListener('click', start);
