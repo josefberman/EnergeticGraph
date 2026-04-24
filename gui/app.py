@@ -17,7 +17,7 @@ import time
 from queue import Queue
 from typing import List, Optional
 
-from flask import Flask, Response, jsonify, render_template, request, make_response
+from flask import Flask, Response, jsonify, render_template, request
 
 from rdkit import RDLogger
 RDLogger.DisableLog('rdApp.*')
@@ -39,46 +39,6 @@ from orchestrator import BeamSearchEngine  # noqa: E402
 
 app = Flask(__name__)
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
-
-
-def _apply_cors_headers(response):
-    """Allow browser UIs on other origins (e.g. GitHub Pages) when EMG_CORS_ORIGINS is set.
-
-    Example:  EMG_CORS_ORIGINS=https://yourname.github.io
-    or:       EMG_CORS_ORIGINS=*
-    """
-    allow = (os.getenv('EMG_CORS_ORIGINS') or '').strip()
-    if not allow:
-        return response
-    origin = request.headers.get('Origin', '')
-    if allow == '*':
-        response.headers['Access-Control-Allow-Origin'] = '*'
-    else:
-        allowed = {x.strip() for x in allow.split(',') if x.strip()}
-        if origin in allowed:
-            response.headers['Access-Control-Allow-Origin'] = origin
-    if 'Access-Control-Allow-Origin' in response.headers:
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-    return response
-
-
-@app.after_request
-def _cors_after(response):
-    if request.path.startswith('/api'):
-        return _apply_cors_headers(response)
-    return response
-
-
-@app.before_request
-def _cors_preflight():
-    if request.method != 'OPTIONS' or not request.path.startswith('/api'):
-        return None
-    if not (os.getenv('EMG_CORS_ORIGINS') or '').strip():
-        return None
-    r = make_response('', 204)
-    return _apply_cors_headers(r)
-
 
 progress_queue: "Queue[dict]" = Queue()
 _current_engine: Optional[BeamSearchEngine] = None

@@ -1,28 +1,7 @@
-/* Energetic Designer — vanilla JS front-end for the Flask SSE backend.
-   On static hosts (e.g. GitHub Pages), set API base via ?api= URL, localStorage
-   key emgApiBase, or window.EMG_API_BASE (e.g. http://127.0.0.1:5001). */
+/* Energetic Designer — vanilla JS front-end for the Flask SSE backend. */
 
 (() => {
     const $ = (id) => document.getElementById(id);
-
-    const getApiBase = () => {
-        try {
-            const q = new URLSearchParams(window.location.search).get('api');
-            if (q) return q.replace(/\/$/, '');
-            const s = localStorage.getItem('emgApiBase');
-            if (s) return s.replace(/\/$/, '');
-        } catch (_) { /* */ }
-        if (typeof window !== 'undefined' && window.EMG_API_BASE) {
-            return String(window.EMG_API_BASE).replace(/\/$/, '');
-        }
-        return '';
-    };
-
-    const apiUrl = (path) => {
-        const b = getApiBase();
-        if (!b) return path;
-        return b + (path.startsWith('/') ? path : `/${path}`);
-    };
 
     const state = {
         es: null,
@@ -337,7 +316,7 @@
         resetLit();
 
         try {
-            const res = await fetch(apiUrl('/api/start'), {
+            const res = await fetch('/api/start', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
@@ -359,7 +338,7 @@
 
     const stop = async () => {
         try {
-            await fetch(apiUrl('/api/stop'), { method: 'POST' });
+            await fetch('/api/stop', { method: 'POST' });
             setStatus('Stop requested…');
         } catch (e) {
             setStatus(`Stop failed: ${e}`, 'error');
@@ -368,7 +347,7 @@
 
     const connectStream = () => {
         if (state.es) state.es.close();
-        state.es = new EventSource(apiUrl('/api/progress'));
+        state.es = new EventSource('/api/progress');
         state.es.onmessage = (evt) => {
             try {
                 const data = JSON.parse(evt.data);
@@ -546,7 +525,7 @@
     const probeOllama = () => {
         const url = (els.ollamaUrl.value || '').trim();
         if (!url) { setOllamaStatus(false, '', ''); return; }
-        fetch(apiUrl('/api/key-status'))
+        fetch('/api/key-status')
             .then((r) => r.json())
             .then((d) => setOllamaStatus(d.ollama_reachable, d.ollama_url || url, d.ollama_model))
             .catch(() => setOllamaStatus(false, url, ''));
@@ -565,7 +544,7 @@
     els.ollamaUrl.addEventListener('change', probeOllama);
     els.ollamaUrl.addEventListener('blur', probeOllama);
 
-    fetch(apiUrl('/api/key-status'))
+    fetch('/api/key-status')
         .then((r) => r.json())
         .then((d) => {
             setApiKeyStatus(d.has_key, d.hint);
@@ -577,38 +556,6 @@
             }
         })
         .catch(() => setApiKeyStatus(false, ''));
-
-    const apiBaseInput = $('api-base');
-    const apiBaseSave = $('api-base-save');
-    if (apiBaseInput) {
-        const s = (() => {
-            try {
-                return localStorage.getItem('emgApiBase') || '';
-            } catch (_) { return ''; }
-        })();
-        if (s) apiBaseInput.value = s;
-    }
-    if (apiBaseSave && apiBaseInput) {
-        apiBaseSave.addEventListener('click', () => {
-            const v = (apiBaseInput.value || '').trim().replace(/\/$/, '');
-            try {
-                if (v) localStorage.setItem('emgApiBase', v);
-                else localStorage.removeItem('emgApiBase');
-            } catch (_) { /* */ }
-            setStatus('API base saved. You can start optimization.', '');
-            fetch(apiUrl('/api/key-status'))
-                .then((r) => r.json())
-                .then((d) => {
-                    setApiKeyStatus(d.has_key, d.hint);
-                    if (d.ollama_url) {
-                        els.ollamaUrl.value = d.ollama_url;
-                        els.ollamaModel.value = d.ollama_model || 'ALIENTELLIGENCE/chemicalengineer';
-                        setOllamaStatus(d.ollama_reachable, d.ollama_url, d.ollama_model);
-                    }
-                })
-                .catch(() => setApiKeyStatus(false, ''));
-        });
-    }
 
     els.runBtn.addEventListener('click', start);
     els.stopBtn.addEventListener('click', stop);

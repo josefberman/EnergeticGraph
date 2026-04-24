@@ -24,6 +24,53 @@
         return b + (path.startsWith('/') ? path : `/${path}`);
     };
 
+    const isLocalUi = () => {
+        const h = location.hostname;
+        return h === 'localhost' || h === '127.0.0.1';
+    };
+
+    /**
+     * True when this HTML is clearly not the Flask app (static host only).
+     * LAN or custom hostnames with Flask on the same origin still use relative /api.
+     */
+    const isStaticOrRemoteUi = () => {
+        if (location.protocol === 'file:') return true;
+        return Boolean(location.hostname && location.hostname.endsWith('github.io'));
+    };
+
+    const isHttpsPageCallingHttpApi = () => {
+        const b = getApiBase();
+        return location.protocol === 'https:' && Boolean(b) && b.startsWith('http:');
+    };
+
+    const canProbeKeyStatus = () => {
+        if (isHttpsPageCallingHttpApi()) return false;
+        if (isStaticOrRemoteUi() && !getApiBase()) return false;
+        return true;
+    };
+
+    const elBackendWarn = $('emg-backend-warn');
+
+    const updateBackendWarnings = () => {
+        if (!elBackendWarn) return;
+        if (!isStaticOrRemoteUi()) {
+            elBackendWarn.hidden = true;
+            return;
+        }
+        const b = getApiBase();
+        if (!b) {
+            elBackendWarn.innerHTML = 'Set <strong>Base URL</strong> to your running Flask app (e.g. <code>http://127.0.0.1:5001</code>) and click <strong>Save & use</strong>. This site is not the API: without a base URL, the browser calls the wrong host and all requests fail.';
+            elBackendWarn.hidden = false;
+            return;
+        }
+        if (isHttpsPageCallingHttpApi()) {
+            elBackendWarn.innerHTML = 'Browsers <strong>block</strong> <code>http://</code> API calls from an <code>https://</code> page (mixed content). Options: (1) use an <strong>HTTPS</strong> tunnel to your local server (e.g. <code>ngrok http 5001</code>, <code>cloudflared</code>); (2) open the app only on <code>http://localhost:5001</code> (Flask serves the full UI) instead of GitHub Pages; (3) serve the <code>docs/</code> folder with <code>python -m http.server</code> so the UI is also HTTP, then you may still need CORS on Flask.';
+            elBackendWarn.hidden = false;
+            return;
+        }
+        elBackendWarn.hidden = true;
+    };
+
     const state = {
         es: null,
         running: false,
@@ -302,6 +349,15 @@
     };
 
     const start = async () => {
+        if (isStaticOrRemoteUi() && !getApiBase()) {
+            setStatus('Set the API base URL to your Flask app and click Save & use.', 'error');
+            updateBackendWarnings();
+            return;
+        }
+        if (isHttpsPageCallingHttpApi()) {
+            setStatus('Cannot call HTTP API from an HTTPS page — use an HTTPS tunnel or run the UI over HTTP. See the notice above.', 'error');
+            return;
+        }
         const payload = {
             density: parseFloat(els.density.value),
             velocity: parseFloat(els.velocity.value),
@@ -348,7 +404,13 @@
                 return;
             }
         } catch (e) {
-            setStatus(`Network error: ${e}`, 'error');
+            const m = (e && e.message) ? String(e.message) : String(e);
+            setStatus(
+                m.includes('Failed to fetch') || m.includes('NetworkError') || m.includes('load failed')
+                    ? 'Request failed. If the UI is on another site than the API, set EMG_CORS_ORIGINS on the server and use an HTTPS API URL for HTTPS pages.'
+                    : `Network error: ${m}`,
+                'error',
+            );
             return;
         }
 
@@ -565,18 +627,22 @@
     els.ollamaUrl.addEventListener('change', probeOllama);
     els.ollamaUrl.addEventListener('blur', probeOllama);
 
-    fetch(apiUrl('/api/key-status'))
-        .then((r) => r.json())
-        .then((d) => {
-            setApiKeyStatus(d.has_key, d.hint);
-            if (d.ollama_url) {
-                els.ollamaUrl.value = d.ollama_url;
-                els.ollamaModel.value = d.ollama_model || 'ALIENTELLIGENCE/chemicalengineer';
-                setOllamaStatus(d.ollama_reachable, d.ollama_url, d.ollama_model);
-                if (d.ollama_reachable) switchTab('ollama');
-            }
-        })
-        .catch(() => setApiKeyStatus(false, ''));
+    if (canProbeKeyStatus()) {
+        fetch(apiUrl('/api/key-status'))
+            .then((r) => r.json())
+            .then((d) => {
+                setApiKeyStatus(d.has_key, d.hint);
+                if (d.ollama_url) {
+                    els.ollamaUrl.value = d.ollama_url;
+                    els.ollamaModel.value = d.ollama_model || 'ALIENTELLIGENCE/chemicalengineer';
+                    setOllamaStatus(d.ollama_reachable, d.ollama_url, d.ollama_model);
+                    if (d.ollama_reachable) switchTab('ollama');
+                }
+            })
+            .catch(() => setApiKeyStatus(false, ''));
+    } else {
+        setApiKeyStatus(false, '');
+    }
 
     const apiBaseInput = $('api-base');
     const apiBaseSave = $('api-base-save');
@@ -595,20 +661,26 @@
                 if (v) localStorage.setItem('emgApiBase', v);
                 else localStorage.removeItem('emgApiBase');
             } catch (_) { /* */ }
+            updateBackendWarnings();
             setStatus('API base saved. You can start optimization.', '');
-            fetch(apiUrl('/api/key-status'))
-                .then((r) => r.json())
-                .then((d) => {
-                    setApiKeyStatus(d.has_key, d.hint);
-                    if (d.ollama_url) {
-                        els.ollamaUrl.value = d.ollama_url;
-                        els.ollamaModel.value = d.ollama_model || 'ALIENTELLIGENCE/chemicalengineer';
-                        setOllamaStatus(d.ollama_reachable, d.ollama_url, d.ollama_model);
-                    }
-                })
-                .catch(() => setApiKeyStatus(false, ''));
+            if (!isHttpsPageCallingHttpApi() && getApiBase()) {
+                fetch(apiUrl('/api/key-status'))
+                    .then((r) => r.json())
+                    .then((d) => {
+                        setApiKeyStatus(d.has_key, d.hint);
+                        if (d.ollama_url) {
+                            els.ollamaUrl.value = d.ollama_url;
+                            els.ollamaModel.value = d.ollama_model || 'ALIENTELLIGENCE/chemicalengineer';
+                            setOllamaStatus(d.ollama_reachable, d.ollama_url, d.ollama_model);
+                        }
+                    })
+                    .catch(() => setApiKeyStatus(false, ''));
+            }
         });
+        apiBaseInput.addEventListener('input', updateBackendWarnings);
     }
+
+    updateBackendWarnings();
 
     els.runBtn.addEventListener('click', start);
     els.stopBtn.addEventListener('click', stop);
