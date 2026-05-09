@@ -318,15 +318,18 @@ body {
 
 .llm-backend-tabs {
     display: flex;
+    flex-wrap: wrap;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     overflow: hidden;
-    width: fit-content;
+    width: 100%;
+    max-width: 100%;
     margin-bottom: 8px;
 }
 
 .llm-tab {
-    flex: 1;
+    flex: 1 1 auto;
+    min-width: 0;
     padding: 4px 14px;
     font-size: 12px;
     font-weight: 500;

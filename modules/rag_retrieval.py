@@ -20,6 +20,15 @@ from dataclasses import dataclass
 
 from rdkit import Chem
 
+from .literature_search import (
+    _make_llm_client,
+    _normalize_llm_backend,
+    _normalize_ollama_chat_model,
+    suggest_analogues_via_literature_embeddings,
+)
+
+from config import DEFAULT_OLLAMA_MODEL, LITERATURE_EMBEDDING_MODEL
+
 # Try to import PDF parsing library
 try:
     import fitz  # PyMuPDF
@@ -384,13 +393,14 @@ class SMILESToNameConverter:
 
 class LiteratureSearcher:
     """
-    Searches multiple scientific literature databases for papers mentioning a chemical compound.
-    
-    Uses multiple APIs for robustness:
-    1. OpenAlex (free, no auth required) - primary source
-    2. ArXiv (free, open access) - secondary source for preprints
-    3. Crossref (free, polite pool) - tertiary source
-    4. Semantic Scholar (free tier) - quaternary source
+    Searches scholarly APIs in priority order until enough papers are found.
+
+    1. OpenAlex (free, abstracts + optional OA URLs)
+    2. Crossref (free)
+    3. Semantic Scholar (free tier)
+    4. ArXiv last (often good for PDFs)
+
+    Queries stop once *max_results* unique papers are collected.
     """
     
     # Standard headers to avoid 403 errors
@@ -409,7 +419,22 @@ class LiteratureSearcher:
         """
         self.max_results = max_results
         self.timeout = timeout
-    
+
+    @staticmethod
+    def _dedupe_papers(papers: List[Dict]) -> List[Dict]:
+        seen_dois = set()
+        unique: List[Dict] = []
+        no_doi_count = 0
+        for paper in papers:
+            doi = paper.get('doi', '')
+            if doi and doi not in seen_dois:
+                seen_dois.add(doi)
+                unique.append(paper)
+            elif not doi and no_doi_count < 3:
+                no_doi_count += 1
+                unique.append(paper)
+        return unique
+
     # Common abbreviations for search queries
     SEARCH_ALIASES = {
         'trinitrotoluene': 'TNT',
@@ -463,49 +488,30 @@ class LiteratureSearcher:
         Returns:
             List of paper dictionaries with title, abstract, doi, authors
         """
-        papers = []
-        
+        papers: List[Dict] = []
+
         # Get search terms (including abbreviations)
         search_term = self._get_search_terms(chemical_name)
-        
-        # 1. Try ArXiv FIRST - has full text PDFs!
-        arxiv_papers = self._search_arxiv(chemical_name, search_term)
-        papers.extend(arxiv_papers)
-        logger.info(f"ArXiv found {len(arxiv_papers)} papers with full text for '{chemical_name}'")
-        
-        # 2. Try OpenAlex for additional coverage (abstracts only)
-        if len(papers) < self.max_results:
-            openalex_papers = self._search_openalex(chemical_name, search_term)
-            papers.extend(openalex_papers)
-            logger.info(f"OpenAlex found {len(openalex_papers)} additional papers")
-        
-        # 3. Try Crossref for additional coverage
-        if len(papers) < self.max_results:
-            crossref_papers = self._search_crossref(chemical_name, search_term)
-            papers.extend(crossref_papers)
-            logger.info(f"Crossref found {len(crossref_papers)} additional papers")
-        
-        # 4. Try Semantic Scholar as fallback
-        if len(papers) < self.max_results // 2:
-            semantic_papers = self._search_semantic_scholar(chemical_name, search_term)
-            papers.extend(semantic_papers)
-            logger.info(f"Semantic Scholar found {len(semantic_papers)} additional papers")
-        
-        # Deduplicate by DOI
-        seen_dois = set()
-        unique_papers = []
-        for paper in papers:
-            doi = paper.get('doi', '')
-            if doi and doi not in seen_dois:
-                seen_dois.add(doi)
-                unique_papers.append(paper)
-            elif not doi:
-                # Keep papers without DOI but limit them
-                if len([p for p in unique_papers if not p.get('doi')]) < 3:
-                    unique_papers.append(paper)
-        
-        logger.info(f"Total unique papers found: {len(unique_papers[:self.max_results])}")
-        return unique_papers[:self.max_results]
+
+        def need_more() -> bool:
+            return len(self._dedupe_papers(papers)) < self.max_results
+
+        source_order = (
+            ('OpenAlex', self._search_openalex),
+            ('Crossref', self._search_crossref),
+            ('Semantic Scholar', self._search_semantic_scholar),
+            ('ArXiv', self._search_arxiv),
+        )
+        for label, fn in source_order:
+            if not need_more():
+                break
+            batch = fn(chemical_name, search_term)
+            papers.extend(batch)
+            logger.info("%s: %d papers for '%s'", label, len(batch), chemical_name)
+
+        unique_papers = self._dedupe_papers(papers)[:self.max_results]
+        logger.info("Total unique papers: %d (cap %d)", len(unique_papers), self.max_results)
+        return unique_papers
     
     def _search_openalex(self, chemical_name: str, search_term: str = None) -> List[Dict]:
         """
@@ -932,15 +938,27 @@ class PropertyExtractor:
     def __init__(self, use_llm: bool = False, llm_api_key: str = None,
                  use_chunking: bool = True,
                  ollama_base_url: Optional[str] = None,
-                 ollama_model: Optional[str] = None):
+                 ollama_model: Optional[str] = None,
+                 llm_backend: str = 'openai'):
+        self.llm_backend = _normalize_llm_backend(llm_backend)
         self.llm_api_key = llm_api_key or os.getenv('OPENAI_API_KEY')
         self.ollama_base_url = ollama_base_url or os.getenv('OLLAMA_BASE_URL')
-        self.ollama_model = ollama_model or os.getenv('OLLAMA_MODEL', 'ALIENTELLIGENCE/chemicalengineer')
+        self.ollama_model = (
+            ollama_model
+            or os.getenv('OLLAMA_MODEL', DEFAULT_OLLAMA_MODEL)
+        )
 
-        has_backend = bool(self.ollama_base_url or self.llm_api_key)
-        self.use_llm = bool(use_llm and has_backend)
-        if use_llm and not has_backend:
-            logger.warning("LLM extraction requested but no API key or Ollama URL configured; disabling.")
+        has_chat = False
+        if self.llm_backend == 'openai':
+            has_chat = bool(self.llm_api_key and str(self.llm_api_key).strip())
+        elif self.llm_backend == 'ollama':
+            has_chat = bool(self.ollama_base_url and str(self.ollama_base_url).strip())
+
+        self.use_llm = bool(use_llm and has_chat)
+        if use_llm and not has_chat:
+            logger.warning(
+                "LLM extraction requested but no chat backend configured; disabling."
+            )
         self.use_chunking = use_chunking
         
         # Initialize chunker and retriever for full-text processing
@@ -1017,7 +1035,7 @@ class PropertyExtractor:
             properties = self._extract_from_text(text, chemical_name, name_variants)
             
             # Also try LLM on the short text
-            if self.use_llm and self.llm_api_key:
+            if self.use_llm:
                 llm_properties = self._extract_with_llm(text, chemical_name)
                 for prop_name, prop_value in llm_properties.items():
                     if prop_value is not None:
@@ -1101,7 +1119,7 @@ class PropertyExtractor:
                         )
         
         # Apply LLM extraction on the relevant chunks (not raw full text)
-        if self.use_llm and self.llm_api_key and relevant_chunks:
+        if self.use_llm and relevant_chunks:
             # Concatenate the top relevant chunks for LLM context
             llm_context = "\n\n".join(chunk for chunk, _ in relevant_chunks[:5])
             llm_properties = self._extract_with_llm(llm_context, chemical_name)
@@ -1220,7 +1238,8 @@ class PropertyExtractor:
         
         try:
             client, model = _make_llm_client(
-                self.llm_api_key, self.ollama_base_url, self.ollama_model)
+                self.llm_api_key, self.ollama_base_url, self.ollama_model,
+                self.llm_backend)
             if client is None:
                 return properties
 
@@ -1276,41 +1295,15 @@ JSON response:"""
                         )
                         
         except Exception as e:
-            logger.warning(f"LLM extraction failed: {e}")
+            err_s = str(e).lower()
+            logger.warning("LLM extraction failed: %s", e)
+            if "not found" in err_s or "404" in err_s:
+                logger.warning(
+                    "If using Ollama, pull the chat model first (e.g. ollama pull %s).",
+                    _normalize_ollama_chat_model(self.ollama_model),
+                )
         
         return properties
-
-
-def _make_llm_client(openai_api_key: Optional[str],
-                     ollama_base_url: Optional[str],
-                     ollama_model: Optional[str]):
-    """Return (client, model_name) for whichever LLM backend is configured.
-
-    Ollama takes priority if ``ollama_base_url`` is set.
-    Ollama exposes an OpenAI-compatible ``/v1`` endpoint so we reuse the
-    ``openai`` SDK with a custom ``base_url``.
-    Returns (None, None) when neither backend is configured.
-    """
-    try:
-        import openai
-    except ImportError:
-        return None, None
-
-    if ollama_base_url:
-        base = ollama_base_url.strip().rstrip('/')
-        # Ensure scheme is present — openai SDK requires an absolute URL.
-        if not base.startswith(('http://', 'https://')):
-            base = 'http://' + base
-        if not base.endswith('/v1'):
-            base = f"{base}/v1"
-        client = openai.OpenAI(base_url=base, api_key='ollama')
-        model = ollama_model or 'ALIENTELLIGENCE/chemicalengineer'
-        return client, model
-
-    if openai_api_key:
-        return openai.OpenAI(api_key=openai_api_key), 'gpt-4o-mini'
-
-    return None, None
 
 
 class RAGPropertyRetriever:
@@ -1321,26 +1314,18 @@ class RAGPropertyRetriever:
     
     def __init__(self,
                  use_llm: bool = False,
-                 max_papers: int = 10,
+                 max_papers: int = 3,
                  timeout: int = 15,
                  openai_api_key: Optional[str] = None,
                  cache_path: Optional[str] = None,
                  ollama_base_url: Optional[str] = None,
-                 ollama_model: Optional[str] = None):
+                 ollama_model: Optional[str] = None,
+                 llm_backend: str = 'openai'):
         """
-        Initialize RAG retriever.
-
         Args:
-            use_llm: Whether to use LLM for property extraction
-            max_papers: Maximum papers to search
-            timeout: API timeout in seconds
-            openai_api_key: OpenAI API key (falls back to OPENAI_API_KEY env var)
-            cache_path: Optional SQLite cache path; disables caching if None
-            ollama_base_url: Base URL of a local Ollama server, e.g.
-                             "http://localhost:11434".  Takes priority over
-                             openai_api_key when set.
-            ollama_model: Model tag to use with Ollama (default: ALIENTELLIGENCE/chemicalengineer)
+            use_llm: Use chat LLM extraction when backend is ``openai`` or ``ollama``.
         """
+        self._llm_backend = _normalize_llm_backend(llm_backend)
         self.name_converter = SMILESToNameConverter(timeout=timeout)
         self.searcher = LiteratureSearcher(max_results=max_papers, timeout=timeout)
         # Resolve backends once: explicit args beat env vars.
@@ -1351,13 +1336,14 @@ class RAGPropertyRetriever:
             ollama_base_url or os.getenv('OLLAMA_BASE_URL') or None
         )
         self._ollama_model: str = (
-            ollama_model or os.getenv('OLLAMA_MODEL') or 'ALIENTELLIGENCE/chemicalengineer'
+            ollama_model or os.getenv('OLLAMA_MODEL') or DEFAULT_OLLAMA_MODEL
         )
         self.extractor = PropertyExtractor(
             use_llm=use_llm,
             llm_api_key=self._openai_api_key,
             ollama_base_url=self._ollama_base_url,
             ollama_model=self._ollama_model,
+            llm_backend=self._llm_backend,
         )
         self.use_llm = self.extractor.use_llm
 
@@ -1374,6 +1360,8 @@ class RAGPropertyRetriever:
             except Exception as e:
                 logger.warning(f"Failed to initialize RAG cache at {cache_path}: {e}")
                 self.cache = None
+
+        self.timeout = timeout
     
     def _get_chemical_name(self, smiles: str) -> Tuple[Optional[str], str]:
         """
@@ -1544,17 +1532,16 @@ class RAGPropertyRetriever:
 
     def _suggest_analogues_via_llm(self, smiles: str,
                                     chemical_name: Optional[str],
-                                    top_k: int = 3) -> List[Tuple[str, str]]:
-        """Ask the LLM to name known energetic compounds structurally similar to
-        this molecule. Returns a list of (common_name, rationale) pairs.
+                                    top_k: int = 3) -> List[Tuple[str, str, float]]:
+        """Chat-LLM analogue suggestions (OpenAI or Ollama ``/v1``) when embeddings miss.
 
-        Always uses ``gpt-4o-mini`` and is gated on ``self.extractor.llm_api_key``
-        — independent of the ``use_llm`` property-extraction flag so that
-        analogue lookup works cheaply even when LLM extraction is off.
+        Embedding analogues (:func:`suggest_analogues_via_literature_embeddings`) run first
+        regardless of backend. Returns triples ``(common_name, rationale, similarity)``.
         """
         try:
             client, model = _make_llm_client(
-                self._openai_api_key, self._ollama_base_url, self._ollama_model)
+                self._openai_api_key, self._ollama_base_url, self._ollama_model,
+                self._llm_backend)
             if client is None:
                 return []
 
@@ -1693,26 +1680,34 @@ Respond with ONLY a JSON array, no prose, no markdown fences:
                                      List['PaperCitation'], int]:
         """Analogue-fallback pipeline.
 
-        1. If an OpenAI key is present, ask the LLM to suggest known analogues.
-        2. Otherwise fall back to Tanimoto nearest-neighbours from the static
-           library in energetic_library.py.
-
-        Property values from analogues get confidence multiplied by
-        ``analogue_similarity ** conf_penalty`` so the XGBoost predictor can
-        outrank very weak analogue evidence.
+        1. ``LITERATURE_EMBEDDING_MODEL`` cosine rank over the curated library.
+        2. Else: chat LLM names.
+        3. Else: Tanimoto neighbours in ``energetic_library``.
         """
-        # --- Step 1: resolve analogue list -----------------------------------
-        # Each entry: (display_name, similarity_score, source_tag)
+
         candidate_names: List[Tuple[str, float, str]] = []
 
-        llm_suggestions = self._suggest_analogues_via_llm(smiles, chemical_name, top_k)
-        if llm_suggestions:
-            print(f"         🤖 LLM suggested analogues: "
-                  f"{', '.join(f'{n} ({s:.2f})' for n, _, s in llm_suggestions)}",
-                  flush=True)
-            for name, reason, sim in llm_suggestions:
-                candidate_names.append((name, sim, f"LLM sim={sim:.2f} ({reason[:55]})"))
-        else:
+        emb_suggestions = suggest_analogues_via_literature_embeddings(smiles, chemical_name, top_k)
+        if emb_suggestions:
+            tag = LITERATURE_EMBEDDING_MODEL
+            print(
+                "         🔭 HF embedding analogues (" + tag + "): "
+                + ", ".join(f"{n} ({s:.2f})" for n, _, s in emb_suggestions),
+                flush=True,
+            )
+            for name, reason, sim in emb_suggestions:
+                candidate_names.append((name, sim, f"HF embedding sim={sim:.2f} ({reason[:50]})"))
+
+        if not candidate_names:
+            llm_suggestions = self._suggest_analogues_via_llm(smiles, chemical_name, top_k)
+            if llm_suggestions:
+                print(f"         🤖 LLM suggested analogues: "
+                      f"{', '.join(f'{n} ({s:.2f})' for n, _, s in llm_suggestions)}",
+                      flush=True)
+                for name, reason, sim in llm_suggestions:
+                    candidate_names.append((name, sim,
+                                            f"LLM sim={sim:.2f} ({reason[:55]})"))
+        if not candidate_names:
             # Static Tanimoto fallback
             try:
                 from .energetic_library import find_similar

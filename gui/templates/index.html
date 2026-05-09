@@ -86,7 +86,7 @@
 
                 <!-- LLM backend selector -->
                 <div id="llm-backend-section" class="llm-backend-section">
-                    <div class="llm-backend-tabs" role="group" aria-label="LLM backend">
+                    <div class="llm-backend-tabs" role="group" aria-label="LLM extraction backend">
                         <button type="button" class="llm-tab active" id="tab-openai" data-backend="openai">OpenAI</button>
                         <button type="button" class="llm-tab" id="tab-ollama" data-backend="ollama">Ollama</button>
                     </div>
@@ -104,12 +104,12 @@
                         <div class="field">
                             <label for="ollama-url">Server URL</label>
                             <input type="text" id="ollama-url" placeholder="http://localhost:11434"
-                                   autocomplete="off" spellcheck="false">
+                                   value="http://localhost:11434" autocomplete="off" spellcheck="false">
                         </div>
                         <div class="field">
                             <label for="ollama-model">Model</label>
-                            <input type="text" id="ollama-model" placeholder="ALIENTELLIGENCE/chemicalengineer"
-                                   value="ALIENTELLIGENCE/chemicalengineer" autocomplete="off" spellcheck="false">
+                            <input type="text" id="ollama-model" placeholder="qwen3.5"
+                                   value="qwen3.5" autocomplete="off" spellcheck="false">
                         </div>
                         <div id="ollama-status" class="api-key-status" aria-live="polite">
                             <span class="api-key-dot"></span>
@@ -139,10 +139,6 @@
                     <div class="stat">
                         <span class="stat-label">Iteration</span>
                         <span class="stat-value" id="iteration-count">0</span>
-                    </div>
-                    <div class="stat">
-                        <span class="stat-label">Candidates</span>
-                        <span class="stat-value" id="candidate-count">0</span>
                     </div>
                     <div class="stat">
                         <span class="stat-label">Best MAPE</span>

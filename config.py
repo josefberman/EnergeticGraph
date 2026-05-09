@@ -10,6 +10,34 @@ from typing import Optional
 # Load environment variables from .env file
 load_dotenv()
 
+# Chat model when backend is ``ollama`` (`OLLAMA_MODEL` overrides); GUI can change each run.
+# Library default tag is often ``qwen3.5:latest``; the OpenAI-compat ``/v1`` calls work with ``qwen3.5``.
+DEFAULT_OLLAMA_MODEL = "qwen3.5"
+
+# Default Ollama host when ``OLLAMA_BASE_URL`` is unset or empty.
+DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
+
+# Fixed analogue-ranking embeddings (ChemBERT-style classifier backbone; mean pool + L2 norm).
+LITERATURE_EMBEDDING_MODEL = "xluobd/chemberta-iupac-classifier"
+
+
+def _default_literature_llm_backend() -> str:
+    """Chat backend for extraction: ``openai`` or ``ollama`` (legacy ``huggingface`` → ``openai``)."""
+    raw = (os.getenv('LITERATURE_LLM_BACKEND', 'openai') or 'openai').strip().lower()
+    if raw == 'huggingface':
+        return 'openai'
+    if raw in ('openai', 'ollama'):
+        return raw
+    return 'openai'
+
+
+def _default_ollama_base_url() -> Optional[str]:
+    raw = os.getenv('OLLAMA_BASE_URL')
+    if raw is None:
+        return DEFAULT_OLLAMA_BASE_URL
+    stripped = raw.strip()
+    return stripped if stripped else DEFAULT_OLLAMA_BASE_URL
+
 
 @dataclass
 class BeamSearchConfig:
@@ -53,8 +81,8 @@ class StrategyPoolConfig:
     # Enable supplementary diverse modifications
     enable_diverse_supplement: bool = True
     
-    # Maximum normalized SAScore threshold for candidates (0.67 ≈ SAScore 7)
-    max_sascore: float = 0.67
+    # Maximum normalized SAScore threshold for candidates (0.7 ≈ SAScore 7)
+    max_sascore: float = 0.7
 
 
 @dataclass
@@ -62,8 +90,11 @@ class LiteratureSearchConfig:
     """Configuration for literature-based property lookup."""
     enable_literature_search: bool = True
     use_llm: bool = False
-    max_papers: int = 10
+    max_papers: int = 3
     timeout: int = 15
+
+    #: Chat backend for extraction: ``openai`` or ``ollama``.
+    llm_backend: str = field(default_factory=_default_literature_llm_backend)
 
     openai_api_key: Optional[str] = field(
         default_factory=lambda: os.getenv('OPENAI_API_KEY')
@@ -71,11 +102,10 @@ class LiteratureSearchConfig:
 
     cache_path: Optional[str] = "./output/literature_cache.sqlite"
 
-    ollama_base_url: Optional[str] = field(
-        default_factory=lambda: os.getenv('OLLAMA_BASE_URL')
-    )
+    ollama_base_url: Optional[str] = field(default_factory=_default_ollama_base_url)
+    #: Ollama chat tag (property extraction / LLM analogues); see ``LITERATURE_EMBEDDING_MODEL`` for embeddings.
     ollama_model: str = field(
-        default_factory=lambda: os.getenv('OLLAMA_MODEL', 'ALIENTELLIGENCE/chemicalengineer')
+        default_factory=lambda: os.getenv('OLLAMA_MODEL', DEFAULT_OLLAMA_MODEL)
     )
 
 

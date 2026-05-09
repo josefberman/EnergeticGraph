@@ -32,7 +32,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from data_structures import PropertyTarget, MoleculeState  # noqa: E402
-from config import Config  # noqa: E402
+from config import DEFAULT_OLLAMA_BASE_URL, DEFAULT_OLLAMA_MODEL, Config  # noqa: E402
 from designer import EnergeticDesigner  # noqa: E402
 from orchestrator import BeamSearchEngine  # noqa: E402
 
@@ -94,7 +94,9 @@ def _molecule_payload(mol: MoleculeState, size=(220, 220), mape: Optional[float]
 
 
 def run_beam_search(target_props, enable_rag, use_llm,
-                    ollama_base_url, ollama_model,
+                    literature_llm_backend: str,
+                    ollama_base_url,
+                    ollama_model,
                     beam_width, top_k, max_iter, mape_threshold_pct):
     """Background worker that drives :class:`BeamSearchEngine`."""
     global _current_engine
@@ -118,8 +120,23 @@ def run_beam_search(target_props, enable_rag, use_llm,
         config.beam_search.mape_target = float(mape_threshold_pct)
         config.literature.enable_literature_search = bool(enable_rag)
         config.literature.use_llm = bool(use_llm)
-        config.literature.ollama_base_url = ollama_base_url or None
-        config.literature.ollama_model = ollama_model or 'ALIENTELLIGENCE/chemicalengineer'
+
+        backend = (literature_llm_backend or 'openai').strip().lower()
+        if backend == 'huggingface':
+            backend = 'openai'
+        if backend not in ('openai', 'ollama'):
+            backend = 'openai'
+        config.literature.llm_backend = backend
+
+        if backend == 'ollama':
+            url = (ollama_base_url or '').strip()
+            if url and not url.startswith(('http://', 'https://')):
+                url = 'http://' + url
+            config.literature.ollama_base_url = url or DEFAULT_OLLAMA_BASE_URL
+            config.literature.ollama_model = (
+                (ollama_model or '').strip() or DEFAULT_OLLAMA_MODEL)
+        else:
+            config.literature.ollama_base_url = None
 
         parent_dir = os.path.join(os.path.dirname(__file__), '..')
         config.system.dataset_path = os.path.join(parent_dir, 'sample_start_molecules.csv')
@@ -146,15 +163,21 @@ def run_beam_search(target_props, enable_rag, use_llm,
 
         has_openai = bool(config.literature.openai_api_key)
         has_ollama = bool(config.literature.ollama_base_url)
-        llm_available = has_openai or has_ollama
-        backend = ('ollama' if has_ollama else 'openai') if llm_available else 'none'
+        lb = config.literature.llm_backend
+        llm_chat_available = (
+            (lb == 'openai' and has_openai)
+            or (lb == 'ollama' and has_ollama)
+        )
+        lit_active = bool(
+            config.literature.enable_literature_search and engine.literature_retriever is not None
+        )
         progress_queue.put({
             'type': 'literature_status',
-            'enabled': bool(config.literature.enable_literature_search and engine.literature_retriever is not None),
-            'use_llm': bool(config.literature.use_llm and llm_available),
-            'llm_analogue': llm_available,
-            'llm_backend': backend,
-            'ollama_model': config.literature.ollama_model if has_ollama else '',
+            'enabled': lit_active,
+            'use_llm': bool(config.literature.use_llm and llm_chat_available),
+            'llm_analogue': lit_active,
+            'llm_backend': lb,
+            'ollama_model': config.literature.ollama_model if lb == 'ollama' else '',
             'cache_path': config.literature.cache_path,
         })
 
@@ -238,11 +261,13 @@ def start_search():
     }
     enable_rag = bool(data.get('enable_rag', True))
     use_llm = bool(data.get('use_llm', False))
+
+    literature_llm_backend = str(data.get('literature_llm_backend', 'openai')).strip().lower()
     ollama_base_url = str(data.get('ollama_base_url', '') or '').strip()
     if ollama_base_url and not ollama_base_url.startswith(('http://', 'https://')):
         ollama_base_url = 'http://' + ollama_base_url
     ollama_base_url = ollama_base_url or None
-    ollama_model = str(data.get('ollama_model', '') or '').strip() or 'ALIENTELLIGENCE/chemicalengineer'
+    ollama_model = str(data.get('ollama_model', '') or '').strip() or DEFAULT_OLLAMA_MODEL
     beam_width = int(data.get('beam_width', 10))
     top_k = int(data.get('top_k', 5))
     max_iter = int(data.get('max_iter', 10))
@@ -251,6 +276,7 @@ def start_search():
     thread = threading.Thread(
         target=run_beam_search,
         args=(target_props, enable_rag, use_llm,
+              literature_llm_backend,
               ollama_base_url, ollama_model,
               beam_width, top_k, max_iter, mape_threshold_pct),
         daemon=True,
@@ -264,15 +290,22 @@ def start_search():
 @app.route('/api/key-status')
 def key_status():
     """Report LLM backend availability without exposing secrets."""
-    from config import Config
     cfg = Config()
     key = cfg.literature.openai_api_key or os.getenv('OPENAI_API_KEY') or ''
     has_key = bool(key.strip())
     hint = (key[:4] + '…') if has_key else ''
 
-    ollama_url = cfg.literature.ollama_base_url or os.getenv('OLLAMA_BASE_URL') or ''
-    ollama_model = cfg.literature.ollama_model or os.getenv('OLLAMA_MODEL') or 'ALIENTELLIGENCE/chemicalengineer'
-
+    ollama_url = (
+        (cfg.literature.ollama_base_url or os.getenv('OLLAMA_BASE_URL') or '').strip()
+        or DEFAULT_OLLAMA_BASE_URL
+    )
+    ollama_model = cfg.literature.ollama_model or os.getenv('OLLAMA_MODEL') or DEFAULT_OLLAMA_MODEL
+    lb = str(getattr(cfg.literature, 'llm_backend', None) or 'openai').strip().lower()
+    if lb == 'huggingface':
+        lb = 'openai'
+    if lb not in ('openai', 'ollama'):
+        lb = 'openai'
+    literature_llm_backend = lb
     # Quick reachability probe for Ollama (non-blocking, short timeout).
     ollama_reachable = False
     if ollama_url:
@@ -293,6 +326,7 @@ def key_status():
         'ollama_url': ollama_url,
         'ollama_model': ollama_model,
         'ollama_reachable': ollama_reachable,
+        'literature_llm_backend': literature_llm_backend,
     })
 
 

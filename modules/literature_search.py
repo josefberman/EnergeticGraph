@@ -4,12 +4,13 @@ Literature search module for energetic property lookup.
 Pipeline:
 1. Convert SMILES to chemical name (PubChem / SMILES2IUPAC)
 2. Search 4 academic APIs (OpenAlex, ArXiv, Crossref, Semantic Scholar)
-3. Download up to 10 relevant PDFs; discard papers with no full text
+3. Download up to 3 relevant PDFs; discard papers with no full text
    AND no candidate-name mention in the abstract
 4. Extract name-centered chunks (paragraph before + match + paragraph after)
 5. Extract properties via LLM (primary) or regex (fallback)
-6. For novel molecules with missing props, LLM suggests structurally
-   similar known compounds and the pipeline repeats on those
+6. For novel molecules with missing props: analogue similarity uses the fixed HF model
+   ``LITERATURE_EMBEDDING_MODEL`` (ChemBERT backbone, mean pool) on the curated library;
+   then chat-LLM analogues, then Tanimoto neighbours. Repeats on suggested compounds.
 """
 
 import os
@@ -18,10 +19,12 @@ import json
 import logging
 import requests
 import tempfile
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
 from rdkit import Chem
+
+from config import DEFAULT_OLLAMA_MODEL, LITERATURE_EMBEDDING_MODEL
 
 try:
     import fitz  # PyMuPDF
@@ -36,6 +39,169 @@ except Exception as e:
 logger = logging.getLogger(__name__)
 
 PROP_KEYS = ['Density', 'Det Velocity', 'Det Pressure', 'Hf solid']
+
+# model_id → (tokenizer, SequenceClassification model)
+_HF_ANALOGUE_EMB_CACHE: Dict[str, Tuple[Any, Any]] = {}
+
+
+def _normalize_llm_backend(name: Optional[str]) -> str:
+    """Normalize to a chat backend for *property extraction*: ``openai`` or ``ollama``.
+
+    ``huggingface`` is legacy (map → ``openai``). Analogue cosine ranking uses
+    ``LITERATURE_EMBEDDING_MODEL`` regardless of backend.
+    """
+    b = (name or 'openai').strip().lower()
+    if b == 'huggingface':
+        return 'openai'
+    if b in ('openai', 'ollama'):
+        return b
+    return 'openai'
+
+
+
+def _ollama_native_api_base(url: str) -> str:
+    """Strip OpenAI-compatible ``/v1`` suffix — native Ollama API lives on host root."""
+    b = (url or "").strip().rstrip("/")
+    if not b:
+        return ""
+    if not b.startswith(("http://", "https://")):
+        b = "http://" + b
+    if b.endswith("/v1"):
+        b = b[:-3]
+    return b.rstrip("/")
+
+
+def _hf_lit_inference_device():
+    """Pick torch device for analogue embedding forwards."""
+    import torch
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+def _get_hf_classifier_embedder(model_id: str) -> Tuple[Any, Any]:
+    """Tokenizer + ``AutoModelForSequenceClassification`` for backbone hidden states."""
+    global _HF_ANALOGUE_EMB_CACHE
+    mid = (model_id or "").strip() or LITERATURE_EMBEDDING_MODEL
+    if mid not in _HF_ANALOGUE_EMB_CACHE:
+        try:
+            from transformers import AutoModelForSequenceClassification, AutoTokenizer
+        except ImportError as e:
+            raise ImportError(
+                "transformers + torch are required for literature analogue embeddings."
+            ) from e
+        logger.info("Loading %s for literature analogue embeddings …", mid)
+        tokenizer = AutoTokenizer.from_pretrained(mid)
+        model = AutoModelForSequenceClassification.from_pretrained(mid)
+        model.eval()
+        model.to(_hf_lit_inference_device())
+        _HF_ANALOGUE_EMB_CACHE[mid] = (tokenizer, model)
+    return _HF_ANALOGUE_EMB_CACHE[mid]
+
+
+def _hf_encode_literal_texts_batches(
+    texts: List[str],
+    tokenizer,
+    model,
+    *,
+    max_length: int = 256,
+    batch_size: int = 16,
+):
+    """Mean-pooled, L2-normalized backbone vectors (one row per input string)."""
+    import numpy as np
+    import torch
+
+    device = next(model.parameters()).device
+    base = getattr(model, model.base_model_prefix)
+    out_rows: List[Any] = []
+    with torch.no_grad():
+        for i in range(0, len(texts), batch_size):
+            chunk = texts[i : i + batch_size]
+            enc = tokenizer(
+                chunk,
+                padding=True,
+                truncation=True,
+                max_length=max_length,
+                return_tensors="pt",
+            )
+            enc = {k: v.to(device) for k, v in enc.items()}
+            hidden = base(**enc).last_hidden_state
+            mask = enc["attention_mask"].unsqueeze(-1).expand(hidden.size()).float()
+            summed = (hidden * mask).sum(dim=1)
+            denom = mask.sum(dim=1).clamp(min=1e-9)
+            pooled = summed / denom
+            normed = torch.nn.functional.normalize(pooled, p=2, dim=1)
+            out_rows.append(normed.cpu().numpy())
+    return np.vstack(out_rows)
+
+
+def suggest_analogues_via_literature_embeddings(
+    smiles: str,
+    chemical_name: Optional[str],
+    top_k: int = 3,
+) -> List[Tuple[str, str, float]]:
+    """Rank curated energetics vs query using fixed ``LITERATURE_EMBEDDING_MODEL`` cosine similarity."""
+
+    try:
+        import numpy as np
+        from .energetic_library import LIBRARY
+
+        tokenizer, clf = _get_hf_classifier_embedder(LITERATURE_EMBEDDING_MODEL)
+    except Exception as e:
+        logger.warning("Literature analogue embeddings unavailable: %s", e)
+        return []
+
+    short = LITERATURE_EMBEDDING_MODEL.split("/")[-1]
+
+    qmol = Chem.MolFromSmiles(smiles)
+    q_canon = Chem.MolToSmiles(qmol) if qmol else None
+
+    corpus_texts: List[str] = []
+    names: List[str] = []
+    for entry in LIBRARY:
+        c = entry.compound
+        if q_canon:
+            lm = Chem.MolFromSmiles(c.smiles)
+            if lm is not None and Chem.MolToSmiles(lm) == q_canon:
+                continue
+        aliases = " ".join(c.aliases)
+        corpus_texts.append(
+            f"{c.name}; {aliases}; {c.family}; SMILES:{c.smiles}".strip()
+        )
+        names.append(c.name)
+
+    if not corpus_texts:
+        return []
+
+    q_text = f"{(chemical_name or '').strip()} | SMILES:{smiles}".strip()
+    try:
+        q_emb = _hf_encode_literal_texts_batches([q_text], tokenizer, clf)[0]
+        lib_emb = _hf_encode_literal_texts_batches(corpus_texts, tokenizer, clf)
+        sims = np.asarray(lib_emb @ q_emb, dtype=float)
+    except Exception as e:
+        logger.warning("Literature embedding encode failed: %s", e)
+        return []
+
+    order = np.argsort(-sims)
+    results: List[Tuple[str, str, float]] = []
+    seen = set()
+    for idx in order:
+        name = names[int(idx)]
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        sim = float(sims[int(idx)])
+        sim_clamped = max(0.05, min(1.0, sim))
+        reason = f"{short} cosine={sim:.3f}; vs query name+SMILES"
+        results.append((name, reason, sim_clamped))
+        if len(results) >= top_k:
+            break
+
+    logger.info("HF embedding analogues (%s): %s", short, [(n, f"{s:.2f}") for n, _, s in results])
+    return results
 
 # ──────────────────────────────────────────────────────────────── data classes
 
@@ -228,9 +394,12 @@ def _get_search_terms(chemical_name: str) -> str:
 
 
 class AcademicSearcher:
-    """Searches OpenAlex, ArXiv, Crossref, and Semantic Scholar.
+    """Searches OpenAlex, Crossref, Semantic Scholar, then ArXiv.
 
-    Each method returns a list of paper dicts with at least:
+    Queries run in that priority until *max_results* unique papers are collected
+    (or sources are exhausted).
+
+    Each method returns paper dicts with at least:
         title, text, doi, authors, source, pdf_url (may be None),
         has_full_text (bool).
     PDF downloading is handled externally; the searcher only provides
@@ -241,32 +410,10 @@ class AcademicSearcher:
         self.max_results = max_results
         self.timeout = timeout
 
-    def search(self, chemical_name: str, smiles: str = None) -> List[Dict]:
-        """Return up to *max_results* deduplicated papers."""
-        papers = []
-        search_term = _get_search_terms(chemical_name)
-
-        arxiv = self._search_arxiv(chemical_name, search_term)
-        papers.extend(arxiv)
-        logger.info(f"ArXiv: {len(arxiv)} papers for '{chemical_name}'")
-
-        if len(papers) < self.max_results:
-            oa = self._search_openalex(chemical_name, search_term)
-            papers.extend(oa)
-            logger.info(f"OpenAlex: {len(oa)} papers")
-
-        if len(papers) < self.max_results:
-            cr = self._search_crossref(chemical_name, search_term)
-            papers.extend(cr)
-            logger.info(f"Crossref: {len(cr)} papers")
-
-        if len(papers) < self.max_results // 2:
-            ss = self._search_semantic_scholar(chemical_name, search_term)
-            papers.extend(ss)
-            logger.info(f"Semantic Scholar: {len(ss)} papers")
-
+    @staticmethod
+    def _dedupe_papers(papers: List[Dict]) -> List[Dict]:
         seen_dois = set()
-        unique = []
+        unique: List[Dict] = []
         no_doi_count = 0
         for p in papers:
             doi = p.get('doi', '')
@@ -276,7 +423,36 @@ class AcademicSearcher:
             elif not doi and no_doi_count < 3:
                 no_doi_count += 1
                 unique.append(p)
-        return unique[:self.max_results]
+        return unique
+
+    def search(self, chemical_name: str, smiles: str = None) -> List[Dict]:
+        """Return up to *max_results* deduplicated papers (priority fill)."""
+        papers: List[Dict] = []
+        search_term = _get_search_terms(chemical_name)
+
+        def need_more() -> bool:
+            return len(self._dedupe_papers(papers)) < self.max_results
+
+        source_order = (
+            ('OpenAlex', self._search_openalex),
+            ('Crossref', self._search_crossref),
+            ('Semantic Scholar', self._search_semantic_scholar),
+            ('ArXiv', self._search_arxiv),
+        )
+        for label, fn in source_order:
+            if not need_more():
+                break
+            # Terminal progress (logger may be WARNING-only in the GUI / beam search).
+            if label == 'ArXiv':
+                batch = fn(chemical_name, search_term)
+            else:
+                print(f"            · {label}…", end=" ", flush=True)
+                batch = fn(chemical_name, search_term)
+                print(f"+{len(batch)}", flush=True)
+            papers.extend(batch)
+            logger.info("%s: %d papers for '%s'", label, len(batch), chemical_name)
+
+        return self._dedupe_papers(papers)[: self.max_results]
 
     # ── ArXiv ──────────────────────────────────────────────────────────────
 
@@ -632,25 +808,45 @@ def _extract_regex(text: str, chemical_name: str, variants: List[str]) -> Dict[s
 
 # ──────────────────────────────────────────────── LLM helpers
 
+
+def _normalize_ollama_chat_model(tag: Optional[str]) -> str:
+    """Align with Ollama docs (e.g. ``qwen3.5``): drop a trailing ``:latest`` if present."""
+    t = (tag or "").strip() or DEFAULT_OLLAMA_MODEL
+    if t.endswith(":latest"):
+        t = t[: -len(":latest")]
+    return t or DEFAULT_OLLAMA_MODEL
+
+
 def _make_llm_client(openai_api_key: Optional[str],
                      ollama_base_url: Optional[str],
-                     ollama_model: Optional[str]):
-    """Return (client, model_name) for whichever LLM backend is configured."""
+                     ollama_model: Optional[str],
+                     llm_backend: str = 'openai'):
+    """Return ``(OpenAI-compatible client, chat_model_tag)`` for extraction / analogue LLM.
+
+    ``openai`` uses the official OpenAI API (model ``gpt-4o-mini``).
+    ``ollama`` uses ``base_url …/v1`` with ``api_key='ollama'``.
+    """
     try:
         import openai
     except ImportError:
         return None, None
 
-    if ollama_base_url:
+    backend = _normalize_llm_backend(llm_backend)
+
+    if backend == 'openai':
+        if openai_api_key and str(openai_api_key).strip():
+            return openai.OpenAI(api_key=openai_api_key), 'gpt-4o-mini'
+        return None, None
+
+    # ollama
+    tag = _normalize_ollama_chat_model(ollama_model)
+    if ollama_base_url and str(ollama_base_url).strip():
         base = ollama_base_url.strip().rstrip('/')
         if not base.startswith(('http://', 'https://')):
             base = 'http://' + base
         if not base.endswith('/v1'):
             base = f"{base}/v1"
-        return openai.OpenAI(base_url=base, api_key='ollama'), (ollama_model or 'ALIENTELLIGENCE/chemicalengineer')
-
-    if openai_api_key:
-        return openai.OpenAI(api_key=openai_api_key), 'gpt-4o-mini'
+        return openai.OpenAI(base_url=base, api_key='ollama'), tag
 
     return None, None
 
@@ -707,7 +903,13 @@ JSON response:"""
                     if _validate_value(pk, fv):
                         props[pk] = RetrievedProperty(value=fv, source="LLM extraction", confidence=0.85)
     except Exception as e:
-        logger.warning(f"LLM extraction failed: {e}")
+        err_s = str(e).lower()
+        logger.warning("LLM extraction failed: %s", e)
+        if "not found" in err_s or "404" in err_s:
+            logger.warning(
+                "If using Ollama, pull the chat model first (e.g. ollama pull %s).",
+                model,
+            )
     return props
 
 
@@ -716,28 +918,42 @@ JSON response:"""
 class PropertyExtractor:
     """Extracts energetic properties from text.
 
-    When an LLM backend is configured it is the **primary** extraction
-    method. Regex patterns serve as fallback when no LLM is available.
+    When OpenAI or Ollama ``/v1`` is configured, LLM extraction is primary; regex
+    is fallback. Analogue cosine ranking uses ``LITERATURE_EMBEDDING_MODEL`` regardless of backend.
     """
 
     def __init__(self, use_llm: bool = False,
                  llm_api_key: str = None,
                  ollama_base_url: Optional[str] = None,
-                 ollama_model: Optional[str] = None):
+                 ollama_model: Optional[str] = None,
+                 llm_backend: str = 'openai'):
+        self.llm_backend = _normalize_llm_backend(llm_backend)
         self.llm_api_key = llm_api_key or os.getenv('OPENAI_API_KEY')
         self.ollama_base_url = ollama_base_url or os.getenv('OLLAMA_BASE_URL')
-        self.ollama_model = ollama_model or os.getenv('OLLAMA_MODEL', 'ALIENTELLIGENCE/chemicalengineer')
-        has_backend = bool(self.ollama_base_url or self.llm_api_key)
-        self.use_llm = bool(use_llm and has_backend)
-        if use_llm and not has_backend:
-            logger.warning("LLM extraction requested but no backend configured; using regex only.")
+        self.ollama_model = (
+            ollama_model
+            or os.getenv('OLLAMA_MODEL', DEFAULT_OLLAMA_MODEL)
+        )
+
+        has_chat = False
+        if self.llm_backend == 'openai':
+            has_chat = bool(self.llm_api_key and str(self.llm_api_key).strip())
+        elif self.llm_backend == 'ollama':
+            has_chat = bool(self.ollama_base_url and str(self.ollama_base_url).strip())
+
+        self.use_llm = bool(use_llm and has_chat)
+        if use_llm and not has_chat:
+            logger.warning(
+                "LLM extraction requested but no chat backend configured; using regex only."
+            )
 
     def extract(self, text: str, chemical_name: str) -> Dict[str, Optional[RetrievedProperty]]:
         """Extract properties from a chunk of text."""
         variants = _get_name_variants(chemical_name)
 
         if self.use_llm:
-            client, model = _make_llm_client(self.llm_api_key, self.ollama_base_url, self.ollama_model)
+            client, model = _make_llm_client(
+                self.llm_api_key, self.ollama_base_url, self.ollama_model, self.llm_backend)
             if client is not None:
                 return _extract_with_llm(text, chemical_name, client, model)
 
@@ -751,25 +967,31 @@ class LiteraturePropertyRetriever:
 
     def __init__(self, *,
                  use_llm: bool = False,
-                 max_papers: int = 10,
+                 max_papers: int = 3,
                  timeout: int = 15,
                  openai_api_key: Optional[str] = None,
                  cache_path: Optional[str] = None,
                  ollama_base_url: Optional[str] = None,
-                 ollama_model: Optional[str] = None):
+                 ollama_model: Optional[str] = None,
+                 llm_backend: str = 'openai'):
         self.name_converter = SMILESToNameConverter(timeout=timeout)
         self.searcher = AcademicSearcher(max_results=max_papers * 3, timeout=timeout)
         self.max_useful = max_papers  # cap on *useful* papers
+        self.timeout = timeout
 
+        self._llm_backend = _normalize_llm_backend(llm_backend)
         self._openai_api_key = openai_api_key or os.getenv('OPENAI_API_KEY') or None
         self._ollama_base_url = ollama_base_url or os.getenv('OLLAMA_BASE_URL') or None
-        self._ollama_model = ollama_model or os.getenv('OLLAMA_MODEL') or 'ALIENTELLIGENCE/chemicalengineer'
+        self._ollama_model = (
+            ollama_model or os.getenv('OLLAMA_MODEL') or DEFAULT_OLLAMA_MODEL
+        )
 
         self.extractor = PropertyExtractor(
             use_llm=use_llm,
             llm_api_key=self._openai_api_key,
             ollama_base_url=self._ollama_base_url,
             ollama_model=self._ollama_model,
+            llm_backend=self._llm_backend,
         )
         self.use_llm = self.extractor.use_llm
 
@@ -811,7 +1033,7 @@ class LiteraturePropertyRetriever:
         else:
             print(f"         🧪 Novel compound (IUPAC): '{chemical_name}'")
 
-        print(f"         📖 Searching literature...", end=" ", flush=True)
+        print(f"         📖 Searching literature…", flush=True)
         raw_papers = self.searcher.search(chemical_name, smiles)
 
         variants = _get_name_variants(chemical_name)
@@ -865,6 +1087,10 @@ class LiteraturePropertyRetriever:
                     chunks = [text[:3000]]
             else:
                 chunks = [text]
+
+            if self.extractor.use_llm and chunks:
+                ttl = title[:52] + ("…" if len(title) > 52 else "")
+                print(f"\n            🤖 Extract ({len(chunks)} chunk(s)): {ttl}", flush=True)
 
             paper_props: Dict[str, Optional[RetrievedProperty]] = {k: None for k in PROP_KEYS}
             for chunk in chunks:
@@ -951,7 +1177,8 @@ class LiteraturePropertyRetriever:
                                     top_k: int = 3) -> List[Tuple[str, str, float]]:
         try:
             client, model = _make_llm_client(
-                self._openai_api_key, self._ollama_base_url, self._ollama_model)
+                self._openai_api_key, self._ollama_base_url, self._ollama_model,
+                self._llm_backend)
             if client is None:
                 return []
 
@@ -1061,13 +1288,25 @@ Respond with ONLY a JSON array, no prose, no markdown fences:
                           ) -> Tuple[Dict[str, RetrievedProperty], List[PaperCitation], int]:
         candidates: List[Tuple[str, float, str]] = []
 
-        llm_suggestions = self._suggest_analogues_via_llm(smiles, chemical_name, top_k)
-        if llm_suggestions:
-            print(f"         🤖 LLM suggested analogues: "
-                  f"{', '.join(f'{n} ({s:.2f})' for n, _, s in llm_suggestions)}", flush=True)
-            for name, reason, sim in llm_suggestions:
-                candidates.append((name, sim, f"LLM sim={sim:.2f} ({reason[:55]})"))
-        else:
+        emb_suggestions = suggest_analogues_via_literature_embeddings(smiles, chemical_name, top_k)
+        if emb_suggestions:
+            tag = LITERATURE_EMBEDDING_MODEL
+            print(
+                "         🔭 HF embedding analogues (" + tag + "): "
+                + ", ".join(f"{n} ({s:.2f})" for n, _, s in emb_suggestions),
+                flush=True,
+            )
+            for name, reason, sim in emb_suggestions:
+                candidates.append((name, sim, f"HF embedding sim={sim:.2f} ({reason[:50]})"))
+
+        if not candidates:
+            llm_suggestions = self._suggest_analogues_via_llm(smiles, chemical_name, top_k)
+            if llm_suggestions:
+                print(f"         🤖 LLM suggested analogues: "
+                      f"{', '.join(f'{n} ({s:.2f})' for n, _, s in llm_suggestions)}", flush=True)
+                for name, reason, sim in llm_suggestions:
+                    candidates.append((name, sim, f"LLM sim={sim:.2f} ({reason[:55]})"))
+        if not candidates:
             try:
                 from .energetic_library import find_similar
                 for compound, tanimoto in find_similar(smiles, top_k=top_k, min_tanimoto=0.30):
@@ -1117,22 +1356,39 @@ Respond with ONLY a JSON array, no prose, no markdown fences:
             papers = self.searcher.search(analogue_name, None)
             n_papers = len(papers)
             papers_searched += n_papers
+            print(f"            Retrieved {n_papers} paper(s); filtering / PDFs / extract…", flush=True)
 
             raw_props: Dict[str, RetrievedProperty] = {}
             raw_cites: List[PaperCitation] = []
             a_variants = _get_name_variants(analogue_name)
 
+            pdfs_downloaded_an = 0
             for paper in papers:
                 text = paper.get('text', '')
                 if not text:
                     continue
                 title = paper.get('title', '')
-                # Try PDF for analogue papers too
-                if paper.get('pdf_url') and not paper.get('has_full_text'):
-                    ft = _download_pdf(paper['pdf_url'])
+                pdf_url = paper.get('pdf_url')
+                # PDFs for analogues (same cap as primary retrieve path)
+                if (
+                    pdf_url
+                    and pdfs_downloaded_an < self.max_useful
+                    and not paper.get('has_full_text')
+                ):
+                    print(
+                        f"\n            📥 [{analogue_name[:22]}{'…' if len(analogue_name) > 22 else ''}] PDF ({paper.get('source', '?')})…",
+                        end=" ",
+                        flush=True,
+                    )
+                    ft = _download_pdf(pdf_url, timeout=max(30, self.timeout * 2))
                     if ft:
+                        pdfs_downloaded_an += 1
                         text = ft
+                        paper['text'] = ft
                         paper['has_full_text'] = True
+                        print(f"✓ ({len(ft)} chars)", end="", flush=True)
+                    else:
+                        print("✗", end="", flush=True)
 
                 if paper.get('has_full_text') and len(text) > 2000:
                     chunks = _extract_name_chunks(text, a_variants)
@@ -1140,6 +1396,10 @@ Respond with ONLY a JSON array, no prose, no markdown fences:
                         chunks = [text[:3000]]
                 else:
                     chunks = [text]
+
+                if self.extractor.use_llm and chunks:
+                    ttl = title[:52] + ("…" if len(title) > 52 else "")
+                    print(f"\n            🤖 Extract ({len(chunks)} chunk(s)): {ttl}", flush=True)
 
                 hits_here: List[str] = []
                 for chunk in chunks:
@@ -1181,7 +1441,10 @@ Respond with ONLY a JSON array, no prose, no markdown fences:
             analogue_citations.extend(raw_cites)
             still_missing = [p for p in still_missing if p not in filled]
             if filled:
-                print(f"            ✅ {analogue_name} filled: {', '.join(sorted(filled.keys()))}")
+                print(
+                    f"            ✅ {analogue_name} filled: {', '.join(sorted(filled.keys()))}",
+                    flush=True,
+                )
 
         return filled, analogue_citations, papers_searched
 

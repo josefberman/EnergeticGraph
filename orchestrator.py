@@ -10,7 +10,7 @@ from typing import Callable, List, Optional
 
 from data_structures import MoleculeState, PropertyTarget
 from agents.worker_agent import ChemistAgent
-from config import Config
+from config import DEFAULT_OLLAMA_MODEL, Config
 from modules.prediction import PropertyPredictor
 from modules.literature_search import LiteraturePropertyRetriever
 
@@ -40,7 +40,8 @@ class BeamSearchEngine:
                 openai_api_key=config.literature.openai_api_key,
                 cache_path=config.literature.cache_path,
                 ollama_base_url=getattr(config.literature, 'ollama_base_url', None),
-                ollama_model=getattr(config.literature, 'ollama_model', 'ALIENTELLIGENCE/chemicalengineer'),
+                ollama_model=getattr(config.literature, 'ollama_model', DEFAULT_OLLAMA_MODEL),
+                llm_backend=getattr(config.literature, 'llm_backend', 'openai'),
             )
             logger.info("BeamSearchEngine: shared literature retriever initialized")
 
@@ -65,6 +66,15 @@ class BeamSearchEngine:
                 self.on_status(msg)
             except Exception as e:
                 logger.warning(f"on_status callback failed: {e}")
+
+    def _notify_best(self) -> None:
+        """Push current global best to observers (e.g. GUI). Call after seed and each iteration."""
+        if self.on_best is None or self.best_ever is None:
+            return
+        try:
+            self.on_best(self.best_ever)
+        except Exception as e:
+            logger.warning(f"on_best callback failed: {e}")
 
     def calculate_mape(self, molecule: MoleculeState) -> float:
         """MAPE (%) across the four target properties. Lower is better."""
@@ -97,6 +107,7 @@ class BeamSearchEngine:
                 self.on_seed(seed_molecule)
             except Exception as e:
                 logger.warning(f"on_seed callback failed: {e}")
+        self._notify_best()
 
         for iteration in range(self.beam_config.max_iterations):
             if self._stop_requested:
@@ -131,15 +142,73 @@ class BeamSearchEngine:
             feasible = [m for m in all_candidates if m.is_feasible]
             print(f", feasible={len(feasible)}", end='')
 
+            seed_fallback = False
             if not feasible:
-                print("\n   ⚠️  No feasible candidates. Stopping.")
-                break
+                if seed_molecule.is_feasible:
+                    feasible = [seed_molecule]
+                    seed_fallback = True
+                    print(" → continuing with seed (no feasible offspring)", end='')
+                    self._status("No feasible offspring; continuing with seed molecule.")
+                else:
+                    print("\n   ⚠️  No feasible candidates. Stopping.")
+                    break
 
             unique = self._remove_duplicates(feasible)
             print(f", unique={len(unique)}")
 
-            ranked = sorted(unique, key=self.calculate_mape)
-            next_beam = ranked[:self.beam_config.top_k]
+            # After iteration 1, offspring alone can push the seed out of the beam
+            # even when the seed still has the best MAPE. Keep competing if feasible.
+            pool = list(unique)
+            if iteration == 0 and seed_molecule.is_feasible:
+                if seed_molecule.smiles not in {m.smiles for m in pool}:
+                    pool.append(seed_molecule)
+
+            pool_smiles = {m.smiles for m in pool}
+            offspring_feasible_unique = self._remove_duplicates(
+                [m for m in all_candidates if m.is_feasible]
+            )
+            retained_parents: List[MoleculeState] = []
+            if offspring_feasible_unique:
+                min_os = min(self.calculate_mape(m) for m in offspring_feasible_unique)
+                for parent in current_beam:
+                    if not parent.is_feasible:
+                        continue
+                    if parent.smiles in pool_smiles:
+                        continue
+                    # Keep parents strictly better MAPE than the best new feasible offspring
+                    # so they compete for the next beam when variants do not improve.
+                    if self.calculate_mape(parent) < min_os:
+                        pool.append(parent)
+                        pool_smiles.add(parent.smiles)
+                        retained_parents.append(parent)
+            else:
+                # No feasible offspring but we continued (e.g. seed_fallback); beam
+                # parents remain valid expansion points if feasible.
+                for parent in current_beam:
+                    if not parent.is_feasible:
+                        continue
+                    if parent.smiles in pool_smiles:
+                        continue
+                    pool.append(parent)
+                    pool_smiles.add(parent.smiles)
+                    retained_parents.append(parent)
+
+            ranked = sorted(pool, key=self.calculate_mape)
+            next_beam = ranked[: self.beam_config.top_k]
+
+            # GUI / observers: include seed when it competes but was not generated as offspring;
+            # retained beam parents likewise when merged into pool.
+            observe_candidates = list(all_candidates)
+            _obs_seen = {m.smiles for m in observe_candidates}
+            for p in retained_parents:
+                if p.smiles not in _obs_seen:
+                    observe_candidates.append(p)
+                    _obs_seen.add(p.smiles)
+
+            if seed_molecule.is_feasible and seed_molecule.smiles not in _obs_seen:
+                if iteration == 0 or seed_fallback:
+                    observe_candidates.append(seed_molecule)
+                    _obs_seen.add(seed_molecule.smiles)
 
             self.log_iteration(iteration + 1, next_beam)
 
@@ -149,11 +218,6 @@ class BeamSearchEngine:
                 self.best_ever = next_beam[0]
                 print(f"\n   🌟 NEW BEST: MAPE {best_mape:.2f}%  "
                       f"{self.best_ever.smiles[:45]}{'...' if len(self.best_ever.smiles) > 45 else ''}")
-                if self.on_best is not None:
-                    try:
-                        self.on_best(self.best_ever)
-                    except Exception as e:
-                        logger.warning(f"on_best callback failed: {e}")
 
             # --- Stop conditions ---------------------------------------------
             improvement = prev_best_mape - best_mape
@@ -167,7 +231,8 @@ class BeamSearchEngine:
             if target > 0 and best_ever_mape <= target:
                 print(f"\n   ✅ MAPE target reached: {best_ever_mape:.2f}% ≤ {target:.2f}%")
                 self._status(f"Target reached: MAPE {best_ever_mape:.2f}% ≤ {target:.2f}%")
-                self._fire_iteration(iteration + 1, all_candidates, next_beam)
+                self._fire_iteration(iteration + 1, observe_candidates, next_beam)
+                self._notify_best()
                 current_beam = next_beam
                 self.history.append(current_beam)
                 break
@@ -184,7 +249,8 @@ class BeamSearchEngine:
                 if self._stall_count >= patience:
                     print(f"\n   ✅ Converged: no meaningful MAPE improvement for "
                           f"{patience} iterations (Δ < {self.beam_config.convergence_threshold}%).")
-                    self._fire_iteration(iteration + 1, all_candidates, next_beam)
+                    self._fire_iteration(iteration + 1, observe_candidates, next_beam)
+                    self._notify_best()
                     current_beam = next_beam
                     self.history.append(current_beam)
                     break
@@ -192,7 +258,8 @@ class BeamSearchEngine:
             prev_best_mape = best_mape
             current_beam = next_beam
             self.history.append(current_beam)
-            self._fire_iteration(iteration + 1, all_candidates, next_beam)
+            self._fire_iteration(iteration + 1, observe_candidates, next_beam)
+            self._notify_best()
 
         print()
         print(f"┌{'─' * 58}┐")
@@ -201,6 +268,7 @@ class BeamSearchEngine:
         print()
 
         logger.info(f"Beam search complete. Best: {self.best_ever.smiles}")
+        self._notify_best()
         if self.on_complete is not None:
             try:
                 self.on_complete(self.best_ever)

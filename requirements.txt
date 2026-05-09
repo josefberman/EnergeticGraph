@@ -1,24 +1,33 @@
-# Energetic Molecular Design System — runtime dependencies
+# Energetic Molecular Design System — third-party runtime dependencies
+# (everything imported or loaded at runtime outside the Python stdlib.)
 
-# Core
+# numpy 1.26 avoids ABI breakage with widely used scipy / sklearn / xgboost wheels.
 python-dotenv>=1.0.0
-rdkit>=2023.9.1
-numpy>=1.24.0
+numpy==1.26.4
+scipy>=1.10.0
 pandas>=2.0.0
 joblib>=1.3.0
+
+rdkit>=2023.9.1
+
 flask>=3.0.0
 requests>=2.31.0
 
-# Machine learning (property prediction)
+# Property prediction (.joblib XGBoost models)
 xgboost>=2.0.0
 scikit-learn>=1.3.0
 
-# RAG — LLM + chemical name resolution + PDF parsing + embeddings
+# Literature retrieval: APIs, analogue embeddings (ChemBERT via transformers), PubChem, PDF text
 openai>=1.10.0
 pubchempy>=1.0.4
 chemical-converters>=0.1.0
 pymupdf>=1.23.0
+transformers>=4.36.0
 sentence-transformers>=2.2.0
+# Transitive torch, huggingface-hub, etc. (sentence-transformers, chemical-converters, transformers)
 
-# Optional plotting / analysis (used by evaluation scripts)
+# Offline evaluation plots (evaluation/rag_evaluation.py)
 matplotlib>=3.7.0
+
+# Note: Synthetic accessibility uses RDKit Contrib SA_Score (BRSAScore / SAScorer on sys.path).
+# Ensure your RDKit build includes contrib, or feasibility falls back to a heuristic score.

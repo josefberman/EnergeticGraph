@@ -26,13 +26,10 @@ def calculate_sascore(smiles: str) -> float:
         import sys
         import os
         sys.path.append(os.path.join(RDConfig.RDContribDir, 'SA_Score'))
-        import sascorer
+        from BRSAScore import SAScorer
         
-        mol = Chem.MolFromSmiles(smiles)
-        if mol is None:
-            return 10.0
-        
-        score = sascorer.calculateScore(mol)
+        scorer = SAScorer()
+        score, _ = scorer.calculateScore(smiles)
         return float(score)
     
     except ImportError:
@@ -132,6 +129,20 @@ def check_valency(smiles: str) -> bool:
     except:
         return False
 
+def f(x):
+    t = (x - 1) / 9
+    t = max(0.0, min(1.0, t))  # optional clamp to keep output in [0, 1]
+
+    a = 0.20460496
+    b = 40.24350687
+    c = 4.21003837
+
+    if t == 0:
+        return 0.0
+    if t == 1:
+        return 1.0
+
+    return (t ** a) / (t ** a + b * ((1 - t) ** c))
 
 def calculate_feasibility(smiles: str) -> Tuple[float, bool]:
     """
@@ -154,13 +165,13 @@ def calculate_feasibility(smiles: str) -> Tuple[float, bool]:
     sascore = calculate_sascore(smiles)
     
     # Normalize SAScore to 0-1 range (0 = most feasible, 1 = least feasible)
-    # Linear normalization: (sascore - 1) / (10 - 1) = (sascore - 1) / 9
-    normalized_sascore = (sascore - 1.0) / 9.0
+    # Using a custom function to avoid division by zero
+    normalized_sascore = f(sascore)
     
     # Clamp to [0, 1] range
     normalized_sascore = max(0.0, min(1.0, normalized_sascore))
     
     # Consider feasible if SAScore <= 7 (moderately synthesizable)
-    is_feasible = sascore <= 7.0
+    is_feasible = sascore <= 7
     
     return normalized_sascore, is_feasible

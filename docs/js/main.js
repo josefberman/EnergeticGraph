@@ -548,7 +548,10 @@
                 return;
             case 'best':
                 renderMoleculeCard(els.bestMol, data);
-                els.compSub.textContent = `Best found at iteration ${state.iteration}`;
+                ingestLitPayload(data);
+                els.compSub.textContent = state.iteration > 0
+                    ? `Best found at iteration ${state.iteration}`
+                    : 'Current global best (seed until a better molecule is found)';
                 return;
             case 'complete':
                 setRunning(false);

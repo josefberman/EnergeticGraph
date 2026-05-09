@@ -33,7 +33,6 @@
         stopBtn: $('stop-btn'),
         statusMsg: $('status-message'),
         iterCount: $('iteration-count'),
-        candCount: $('candidate-count'),
         bestMape: $('best-mape'),
         bestFeas: $('best-feasibility'),
         bestScore: $('best-score'),
@@ -281,6 +280,7 @@
     };
 
     const start = async () => {
+        const analogueHintIdle = els.enableLit.checked;
         const payload = {
             density: parseFloat(els.density.value),
             velocity: parseFloat(els.velocity.value),
@@ -292,15 +292,17 @@
             mape_threshold: parseFloat(els.mape.value),
             enable_rag: els.enableLit.checked,
             use_llm: els.enableLit.checked && els.useLlm.checked,
+            literature_llm_backend: _activeBackend,
             ollama_base_url: _activeBackend === 'ollama'
                 ? (els.ollamaUrl.value || '').trim() : '',
-            ollama_model: (els.ollamaModel.value || 'ALIENTELLIGENCE/chemicalengineer').trim(),
+            ollama_model: _activeBackend === 'ollama'
+                ? ((els.ollamaModel.value || '').trim() || 'qwen3.5')
+                : '',
         };
 
         state.maxIter = payload.max_iter;
         state.iteration = 0;
         els.iterCount.textContent = '0';
-        els.candCount.textContent = '0';
         els.bestMape.textContent = '–';
         els.bestFeas.textContent = '–';
         els.bestScore.textContent = '–';
@@ -312,7 +314,12 @@
         els.seedMol.innerHTML = '<p class="empty-text">Loading…</p>';
         els.bestMol.classList.add('empty');
         els.bestMol.innerHTML = '<p class="empty-text">No results yet</p>';
-        setLitState(els.enableLit.checked, els.enableLit.checked && els.useLlm.checked, false);
+        setLitState(
+            els.enableLit.checked,
+            els.enableLit.checked && els.useLlm.checked,
+            analogueHintIdle,
+            _activeBackend,
+        );
         resetLit();
 
         try {
@@ -398,19 +405,27 @@
         els.litCitations.innerHTML = items.map(renderCitationItem).join('');
     };
 
-    const setLitState = (enabled, useLlm, llmAnalogue) => {
+    const setLitState = (enabled, useLlm, llmAnalogue, backendOverride) => {
+        const lb = backendOverride || _activeBackend || 'openai';
         state.lit.enabled = !!enabled;
         state.lit.useLlm = !!useLlm;
         els.litPill.dataset.state = enabled ? 'on' : 'off';
         els.litPill.innerHTML = `Lit <strong>${enabled ? 'On' : 'Off'}</strong>`;
         let mode = 'regex';
-        if (useLlm && llmAnalogue) mode = 'LLM extract + analogue';
-        else if (useLlm) mode = 'LLM extract';
-        else if (llmAnalogue) mode = 'regex · LLM analogue';
-        els.litState.textContent = enabled ? `On · ${mode}` : 'Off';
-        els.litSub.textContent = enabled
-            ? `Literature search · ${mode}`
-            : 'Disabled — all properties predicted';
+        if (!enabled) {
+            els.litState.textContent = 'Off';
+            els.litSub.textContent = 'Disabled — all properties predicted';
+            return;
+        }
+        if (useLlm && llmAnalogue) {
+            mode = `LLM extract · ChemBERT analogue (${lb})`;
+        } else if (useLlm) {
+            mode = `LLM extract (${lb})`;
+        } else if (llmAnalogue) {
+            mode = 'regex · ChemBERT analogue';
+        }
+        els.litState.textContent = `On · ${mode}`;
+        els.litSub.textContent = `Literature search · ${mode}`;
     };
 
     const resetLit = () => {
@@ -429,11 +444,10 @@
                 els.progressSub.textContent = data.message;
                 return;
             case 'literature_status': {
-                setLitState(data.enabled, data.use_llm, data.llm_analogue);
-                if (data.llm_backend === 'ollama') {
+                const lb = data.llm_backend || 'openai';
+                setLitState(data.enabled, data.use_llm, data.llm_analogue, lb);
+                if (lb === 'ollama') {
                     setOllamaStatus(true, els.ollamaUrl.value, data.ollama_model || '');
-                } else {
-                    setApiKeyStatus(data.llm_analogue, '');
                 }
                 resetLit();
                 return;
@@ -449,7 +463,6 @@
             case 'iteration':
                 state.iteration = data.iteration;
                 els.iterCount.textContent = String(data.iteration);
-                els.candCount.textContent = String(data.candidates.length);
                 els.progressFill.style.width =
                     `${Math.min(100, (data.iteration / state.maxIter) * 100)}%`;
                 els.progressSub.textContent =
@@ -465,7 +478,10 @@
                 return;
             case 'best':
                 renderMoleculeCard(els.bestMol, data);
-                els.compSub.textContent = `Best found at iteration ${state.iteration}`;
+                ingestLitPayload(data);
+                els.compSub.textContent = state.iteration > 0
+                    ? `Best found at iteration ${state.iteration}`
+                    : 'Current global best (seed until a better molecule is found)';
                 return;
             case 'complete':
                 setRunning(false);
@@ -500,7 +516,7 @@
         if (reachable) {
             el.dataset.state = 'present';
             el.querySelector('.api-key-label').textContent =
-                `Reachable · model: ${model || 'ALIENTELLIGENCE/chemicalengineer'}`;
+                `Reachable · model: ${model || 'qwen3.5'}`;
         } else {
             el.dataset.state = 'missing';
             el.querySelector('.api-key-label').textContent =
@@ -537,6 +553,7 @@
         els.tabOllama.classList.toggle('active', backend === 'ollama');
         els.panelOpenai.hidden = (backend !== 'openai');
         els.panelOllama.hidden = (backend !== 'ollama');
+        syncLlmToggle();
     };
 
     els.tabOpenai.addEventListener('click', () => switchTab('openai'));
@@ -548,12 +565,14 @@
         .then((r) => r.json())
         .then((d) => {
             setApiKeyStatus(d.has_key, d.hint);
+            if (d.ollama_url) els.ollamaUrl.value = d.ollama_url;
+            els.ollamaModel.value = d.ollama_model || 'qwen3.5';
             if (d.ollama_url) {
-                els.ollamaUrl.value = d.ollama_url;
-                els.ollamaModel.value = d.ollama_model || 'ALIENTELLIGENCE/chemicalengineer';
                 setOllamaStatus(d.ollama_reachable, d.ollama_url, d.ollama_model);
-                if (d.ollama_reachable) switchTab('ollama');
             }
+            const lb = (d.literature_llm_backend || 'openai').toLowerCase().trim();
+            if (lb === 'ollama') switchTab('ollama');
+            else switchTab('openai');
         })
         .catch(() => setApiKeyStatus(false, ''));
 
@@ -564,9 +583,17 @@
         const litOn = els.enableLit.checked;
         els.useLlm.disabled = !litOn;
         if (!litOn) els.useLlm.checked = false;
+
         els.useLlm.closest('label').style.opacity = litOn ? '' : '0.5';
         els.llmBackendSection.style.opacity = litOn ? '' : '0.5';
-        setLitState(litOn, litOn && els.useLlm.checked, false);
+
+        const analogueIdle = litOn;
+        setLitState(
+            litOn,
+            litOn && els.useLlm.checked,
+            analogueIdle,
+            _activeBackend,
+        );
     };
 
     els.enableLit.addEventListener('change', syncLlmToggle);

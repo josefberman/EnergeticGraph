@@ -11,7 +11,7 @@ from modules.feasibility import calculate_feasibility
 from modules.scoring import calculate_total_score
 from modules.strategy_pool import StrategyPoolModifier, default_modification_strategy
 from modules.literature_search import LiteraturePropertyRetriever, PaperCitation
-from config import Config
+from config import DEFAULT_OLLAMA_MODEL, Config
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,9 @@ class ChemistAgent:
                 timeout=config.literature.timeout,
                 openai_api_key=config.literature.openai_api_key,
                 cache_path=config.literature.cache_path,
+                ollama_base_url=getattr(config.literature, 'ollama_base_url', None),
+                ollama_model=getattr(config.literature, 'ollama_model', DEFAULT_OLLAMA_MODEL),
+                llm_backend=getattr(config.literature, 'llm_backend', 'openai'),
             )
             logger.info("ChemistAgent built its own literature retriever")
         else:
