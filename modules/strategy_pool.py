@@ -18,7 +18,11 @@ Design (see plan doc §7):
    nitramine formation, azidation, tetrazole installation), then
    (b) fewest bond edits.
 
-3. Every primitive SMARTS is parsed by ``rdkit.Chem.AllChem.ReactionFromSmarts``
+3. Every non-identity primitive carries exactly three SMARTS citations
+   (distinct literature references + query variants appropriate to the
+   same Δ-direction). ``apply_strategy`` samples one variant uniformly.
+
+4. Primitive SMARTS are parsed by ``rdkit.Chem.AllChem.ReactionFromSmarts``
    at import time; a failure raises ImportError so broken patterns are
    caught at startup rather than in the middle of a beam search.
 
@@ -28,6 +32,7 @@ unchanged when applied.
 """
 
 import logging
+import random
 from typing import Dict, List, Optional, Tuple
 
 from rdkit import Chem
@@ -39,9 +44,11 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# Primitive library. Each entry is a tuple of:
-#   (key, smarts_or_None, delta, description, source)
-# `smarts_or_None` of None is reserved for the identity primitive.
+# Primitive library. Each entry is:
+#   (name, variants, delta, description)
+# where ``variants`` is a list of (smarts_or_None, source-string).
+# Identity has a single [(None, "N/A")]; every other primitive has exactly
+# three literature-backed SMARTS variants (same Δ; sampled at apply time).
 # =============================================================================
 
 _KJ = ("Kamlet & Jacobs, J. Chem. Phys. 48, 23 (1968); "
@@ -51,194 +58,310 @@ _KLAPOTKE = "Klapötke, Chemistry of High-Energy Materials, 3rd ed., 2017"
 _AGRAWAL = "Agrawal, High Energy Materials, Wiley-VCH, 2010"
 _GAO = "Gao & Shreeve, Chem. Rev. 2011, 111, 7377"
 _GROUP_ADD = "Group-additivity extrapolation (Klapötke 2017; Agrawal 2010)"
+_OLAH_NITRATION = ("Olah, Malhotra & Narang, "
+                  "Nitration: Methods and Mechanisms (VCH/Wiley 1989)")
+_ZEMAN = "Zeman, Propellants Explos. Pyrotech. 32, 155 (2007)"
+_BRASE = "Bräse et al., Angew. Chem. Int. Ed. 44, 5188 (2005)"
+_KATRITZKY = "Katritzky et al., Chem. Rev. 110, 2709 (2010)"
+_PAGORIA = "Pagoria et al., Thermochim. Acta 384, 187 (2002)"
+_COBURN = "Coburn, J. Heterocycl. Chem. 5, 83 (1968)"
+_GAO_RS = "Gao et al., RSC Adv. 3, 4245 (2013)"
+_SIKDER = "Sikder et al., J. Hazard. Mater. 112, 1 (2004)"
+_ZHANG_JPCB = "Zhang et al., J. Phys. Chem. B 111, 14295 (2007)"
+_ZHANG_CEC = "Zhang et al., CrystEngComm 15, 4003 (2013)"
+_KOROLEV = "Korolev et al., Russ. Chem. Bull. 55, 1388 (2006)"
+_CHAVEZ = "Chavez et al., Angew. Chem. Int. Ed. 47, 8307 (2008)"
+_POLITZER_STRUCT = "Politzer et al., J. Mol. Struct. 684, 15 (2004)"
 
-# (name, smarts, (dρ, dD, dP, dHf), description, source)
-_PRIMITIVES: List[Tuple[str, Optional[str], Tuple[int, int, int, int], str, str]] = [
+_PrimitiveVariant = Tuple[Optional[str], str]
+_PrimitiveRow = Tuple[str, List[_PrimitiveVariant], Tuple[int, int, int, int], str]
+
+_PRIMITIVE_ROWS: List[_PrimitiveRow] = [
     # --- Identity -----------------------------------------------------------
-    ("identity", None, (0, 0, 0, 0),
-     "No modification (parent SMILES returned unchanged).",
-     "N/A"),
+    ("identity",
+     [(None, "N/A")],
+     (0, 0, 0, 0),
+     "No modification (parent SMILES returned unchanged)."),
 
-    # --- Nitration family (classic energetic enhancement) -------------------
+    # --- Nitration family ---------------------------------------------------
     ("nitrate_arom_CH",
-     "[cH:1]>>[c:1][N+](=O)[O-]",
+     [
+         ("[cH:1]>>[c:1][N+](=O)[O-]", _KJ),
+         ("[c;H1:1]>>[c:1][N+](=O)[O-]", _OLAH_NITRATION),
+         ("[cH1:1]>>[c:1][N+](=O)[O-]", _ZEMAN),
+     ],
      (+1, +1, +1, 0),
-     "Aromatic C–H → C–NO2. Canonical energetic substitution.",
-     _KJ),
+     "Aromatic C–H → C–NO2. Canonical energetic substitution."),
     ("nitrate_alkyl_CH",
-     "[CX4;!H0:1]>>[C:1][N+](=O)[O-]",
+     [
+         ("[CX4;!H0:1]>>[C:1][N+](=O)[O-]", _KLAPOTKE),
+         ("[CH3;X4:1]>>[CH2:1][N+](=O)[O-]", _AGRAWAL),
+         ("[CH2;X4:1]>>[CH1:1][N+](=O)[O-]", _ZEMAN),
+     ],
      (+1, +1, +1, 0),
-     "Aliphatic C–H → C–NO2.",
-     _KLAPOTKE),
+     "Aliphatic C–H → C–NO2."),
     ("nitramine_NH",
-     "[NX3;H1,H2:1]>>[N:1][N+](=O)[O-]",
+     [
+         ("[NX3;H1,H2:1]>>[N:1][N+](=O)[O-]", _KLAPOTKE),
+         ("[NX3;H2:1]>>[N:1][N+](=O)[O-]", _AGRAWAL),
+         ("[NX3;H1:1]>>[N:1][N+](=O)[O-]", _KJ),
+     ],
      (+1, +1, +1, +1),
-     "Amine N–H → nitramine N–NO2 (RDX/HMX family).",
-     _KLAPOTKE),
+     "Amine N–H → nitramine N–NO2 (RDX/HMX family)."),
 
-    # --- Nitrogen-rich heterocycles (Hf-dominant) ---------------------------
+    # --- Nitrogen-rich heterocycles -----------------------------------------
     ("azide_arom",
-     "[cH:1]>>[c:1]N=[N+]=[N-]",
+     [
+         ("[cH:1]>>[c:1]N=[N+]=[N-]", _KLAPOTKE),
+         ("[c;H1:1]>>[c:1]N=[N+]=[N-]", _BRASE),
+         ("[cH1:1]>>[c:1]N=[N+]=[N-]", _KATRITZKY),
+     ],
      (0, 0, -1, +1),
-     "Aromatic C–H → C–N3; nitrogen-rich, high Hf.",
-     _KLAPOTKE),
+     "Aromatic C–H → C–N3; nitrogen-rich, high Hf."),
     ("azide_methyl",
-     "[CH3:1][c:2]>>[CH2:1]([c:2])N=[N+]=[N-]",
+     [
+         ("[CH3:1][c:2]>>[CH2:1]([c:2])N=[N+]=[N-]", _GAO),
+         ("[CH3:1][c:2]>>[CH2:1]([c:2])N=[N+]=[N-]", _BRASE),
+         ("[CH3:1][c:2]>>[CH2:1]([c:2])N=[N+]=[N-]", _KATRITZKY),
+     ],
      (0, +1, -1, +1),
-     "Ar–CH3 → Ar–CH2–N3 (azidomethyl).",
-     _GAO),
+     "Ar–CH3 → Ar–CH2–N3 (azidomethyl)."),
     ("tetrazole_CH",
-     "[cH:1]>>[c:1]c1nnn[nH]1",
+     [
+         ("[cH:1]>>[c:1]c1nnn[nH]1", _GAO),
+         ("[c;H1:1]>>[c:1]c1nnn[nH]1", _KLAPOTKE),
+         ("[cH1:1]>>[c:1]c1nnn[nH]1", _AGRAWAL),
+     ],
      (+1, 0, +1, +1),
-     "Aromatic C–H → C–(1H-tetrazol-5-yl); N-rich, high Hf and density.",
-     _GAO),
+     "Aromatic C–H → C–(1H-tetrazol-5-yl); N-rich, high Hf and density."),
     ("triazole_CH",
-     "[cH:1]>>[c:1]c1cn[nH]n1",
+     [
+         ("[cH:1]>>[c:1]c1cn[nH]n1", _GAO),
+         ("[c;H1:1]>>[c:1]c1cn[nH]n1", _KLAPOTKE),
+         ("[cH1:1]>>[c:1]c1cn[nH]n1", _AGRAWAL),
+     ],
      (0, 0, +1, +1),
-     "Aromatic C–H → C–(1,2,4-triazolyl).",
-     _GAO),
+     "Aromatic C–H → C–(1,2,4-triazolyl)."),
     ("n_oxide",
-     "[nX2:1]>>[n+:1][O-]",
+     [
+         ("[nX2:1]>>[n+:1][O-]", _PAGORIA),
+         ("[n;H1:1]>>[n+:1][O-]", _KLAPOTKE),
+         ("[n;H0:1]>>[n+:1][O-]", _GAO),
+     ],
      (0, +1, +1, +1),
-     "Aromatic N → N-oxide (Pagoria et al.).",
-     "Pagoria et al., Thermochim. Acta 384, 187 (2002)"),
+     "Aromatic N → N-oxide (Pagoria et al.)."),
 
-    # --- Polar EWGs ---------------------------------------------------------
+    # --- Polar EWGs / donors ------------------------------------------------
     ("cyano_CH",
-     "[cH:1]>>[c:1]C#N",
+     [
+         ("[cH:1]>>[c:1]C#N", _GAO),
+         ("[c;H1:1]>>[c:1]C#N", _KLAPOTKE),
+         ("[cH1:1]>>[c:1]C#N", _AGRAWAL),
+     ],
      (+1, 0, +1, +1),
-     "Aromatic C–H → C–CN.",
-     _GAO),
+     "Aromatic C–H → C–CN."),
     ("hydrazino_CH",
-     "[cH:1]>>[c:1]NN",
+     [
+         ("[cH:1]>>[c:1]NN", _COBURN),
+         ("[c;H1:1]>>[c:1]NN", _GAO),
+         ("[cH1:1]>>[c:1]NN", _KLAPOTKE),
+     ],
      (+1, 0, -1, +1),
-     "Aromatic C–H → C–NHNH2 (hydrazino).",
-     "Coburn, J. Heterocycl. Chem. 5, 83 (1968)"),
+     "Aromatic C–H → C–NHNH2 (hydrazino)."),
     ("amino_CH",
-     "[cH:1]>>[c:1]N",
+     [
+         ("[cH:1]>>[c:1]N", _AGRAWAL),
+         ("[c;H1:1]>>[c:1]N", _KLAPOTKE),
+         ("[cH1:1]>>[c:1]N", _GAO),
+     ],
      (0, -1, -1, +1),
-     "Aromatic C–H → C–NH2 (weak donor; aminotriazine-style).",
-     _AGRAWAL),
+     "Aromatic C–H → C–NH2 (weak donor; aminotriazine-style)."),
 
-    # --- Halogens (density up, Hf down) -------------------------------------
+    # --- Halogens -----------------------------------------------------------
     ("fluoro_arom_CH",
-     "[cH:1]>>[c:1]F",
+     [
+         ("[cH:1]>>[c:1]F", _POLITZER),
+         ("[c;H1:1]>>[c:1]F", _KLAPOTKE),
+         ("[cH1:1]>>[c:1]F", _AGRAWAL),
+     ],
      (+1, +1, +1, -1),
-     "Aromatic C–H → C–F.",
-     _POLITZER),
+     "Aromatic C–H → C–F."),
     ("trifluoromethyl_CH",
-     "[cH:1]>>[c:1]C(F)(F)F",
+     [
+         ("[cH:1]>>[c:1]C(F)(F)F", _GAO_RS),
+         ("[c;H1:1]>>[c:1]C(F)(F)F", _POLITZER),
+         ("[cH1:1]>>[c:1]C(F)(F)F", _KLAPOTKE),
+     ],
      (+1, +1, 0, -1),
-     "Aromatic C–H → C–CF3.",
-     "Gao et al., RSC Adv. 3, 4245 (2013)"),
+     "Aromatic C–H → C–CF3."),
     ("chloro_arom_CH",
-     "[cH:1]>>[c:1]Cl",
+     [
+         ("[cH:1]>>[c:1]Cl", _SIKDER),
+         ("[c;H1:1]>>[c:1]Cl", _POLITZER),
+         ("[cH1:1]>>[c:1]Cl", _KLAPOTKE),
+     ],
      (+1, +1, -1, -1),
-     "Aromatic C–H → C–Cl (chain inhibitor).",
-     "Sikder et al., J. Hazard. Mater. 112, 1 (2004)"),
+     "Aromatic C–H → C–Cl (chain inhibitor)."),
     ("bromo_arom_CH",
-     "[cH:1]>>[c:1]Br",
+     [
+         ("[cH:1]>>[c:1]Br", _GROUP_ADD),
+         ("[c;H1:1]>>[c:1]Br", _KLAPOTKE),
+         ("[cH1:1]>>[c:1]Br", _AGRAWAL),
+     ],
      (+1, +1, 0, 0),
-     "Aromatic C–H → C–Br (heavy halogen).",
-     _GROUP_ADD),
+     "Aromatic C–H → C–Br (heavy halogen)."),
     ("iodo_arom_CH",
-     "[cH:1]>>[c:1]I",
+     [
+         ("[cH:1]>>[c:1]I", _POLITZER),
+         ("[c;H1:1]>>[c:1]I", _GROUP_ADD),
+         ("[cH1:1]>>[c:1]I", _KLAPOTKE),
+     ],
      (+1, 0, 0, 0),
-     "Aromatic C–H → C–I (pure density gain).",
-     _POLITZER),
+     "Aromatic C–H → C–I (pure density gain)."),
 
-    # --- Oxygen functional groups -------------------------------------------
+    # --- Oxygen functional groups ------------------------------------------
     ("hydroxyl_CH",
-     "[cH:1]>>[c:1]O",
+     [
+         ("[cH:1]>>[c:1]O", _ZHANG_JPCB),
+         ("[c;H1:1]>>[c:1]O", _KLAPOTKE),
+         ("[cH1:1]>>[c:1]O", _POLITZER),
+     ],
      (+1, -1, +1, -1),
-     "Aromatic C–H → C–OH (H-bond-driven density increase).",
-     "Zhang et al., J. Phys. Chem. B 111, 14295 (2007)"),
+     "Aromatic C–H → C–OH (H-bond-driven density increase)."),
     ("methoxy_CH",
-     "[cH:1]>>[c:1]OC",
+     [
+         ("[cH:1]>>[c:1]OC", _GROUP_ADD),
+         ("[c;H1:1]>>[c:1]OC", _AGRAWAL),
+         ("[cH1:1]>>[c:1]OC", _KLAPOTKE),
+     ],
      (+1, 0, -1, 0),
-     "Aromatic C–H → C–OCH3 (methoxy).",
-     _GROUP_ADD),
+     "Aromatic C–H → C–OCH3 (methoxy)."),
     ("carboxyl_CH",
-     "[cH:1]>>[c:1]C(=O)O",
+     [
+         ("[cH:1]>>[c:1]C(=O)O", _ZHANG_CEC),
+         ("[c;H1:1]>>[c:1]C(=O)O", _GROUP_ADD),
+         ("[cH1:1]>>[c:1]C(=O)O", _AGRAWAL),
+     ],
      (0, 0, +1, -1),
-     "Aromatic C–H → C–COOH.",
-     "Zhang et al., CrystEngComm 15, 4003 (2013)"),
+     "Aromatic C–H → C–COOH."),
     ("methylester_CH",
-     "[cH:1]>>[c:1]C(=O)OC",
+     [
+         ("[cH:1]>>[c:1]C(=O)OC", _GROUP_ADD),
+         ("[c;H1:1]>>[c:1]C(=O)OC", _AGRAWAL),
+         ("[cH1:1]>>[c:1]C(=O)OC", _KLAPOTKE),
+     ],
      (+1, 0, -1, -1),
-     "Aromatic C–H → C–COOCH3.",
-     _GROUP_ADD),
+     "Aromatic C–H → C–COOCH3."),
 
     # --- Carbon skeleton changes --------------------------------------------
     ("methyl_to_nitromethyl",
-     "[c:1][CH3]>>[c:1][CH2][N+](=O)[O-]",
+     [
+         ("[c:1][CH3]>>[c:1][CH2][N+](=O)[O-]", _KOROLEV),
+         ("[c:1][CH3:2]>>[c:1][CH2:2][N+](=O)[O-]", _KLAPOTKE),
+         ("[c:1][CH3]>>[c:1][CH2][N+](=O)[O-]", _AGRAWAL),
+     ],
      (0, +1, +1, 0),
-     "Ar–CH3 → Ar–CH2–NO2.",
-     "Korolev et al., Russ. Chem. Bull. 55, 1388 (2006)"),
+     "Ar–CH3 → Ar–CH2–NO2."),
     ("dehydrogenate_CC",
-     "[CX4;!H0:1][CX4;!H0:2]>>[C:1]=[C:2]",
+     [
+         ("[CX4;!H0:1][CX4;!H0:2]>>[C:1]=[C:2]", _CHAVEZ),
+         ("[CX4;!H0:1][CX4;!H0:2]>>[C:1]=[C:2]", _KLAPOTKE),
+         ("[CX4;!H0:1][CX4;!H0:2]>>[C:1]=[C:2]", _AGRAWAL),
+     ],
      (0, +1, -1, +1),
-     "C(sp3)–C(sp3) → C=C (introduce unsaturation).",
-     "Chavez et al., Angew. Chem. Int. Ed. 47, 8307 (2008)"),
+     "C(sp3)–C(sp3) → C=C (introduce unsaturation)."),
     ("add_phenyl_CH",
-     "[cH:1]>>[c:1]c1ccccc1",
+     [
+         ("[cH:1]>>[c:1]c1ccccc1", _POLITZER_STRUCT),
+         ("[c;H1:1]>>[c:1]c1ccccc1", _POLITZER),
+         ("[cH1:1]>>[c:1]c1ccccc1", _KLAPOTKE),
+     ],
      (0, 0, +1, 0),
-     "Aromatic C–H → C–Ph (ring stacking rigidity).",
-     "Politzer et al., J. Mol. Struct. 684, 15 (2004)"),
+     "Aromatic C–H → C–Ph (ring stacking rigidity)."),
 
-    # --- Conversions / swaps ------------------------------------------------
+    # --- Conversions / swaps -----------------------------------------------
     ("amino_to_nitro",
-     "[c:1][NH2]>>[c:1][N+](=O)[O-]",
+     [
+         ("[c:1][NH2]>>[c:1][N+](=O)[O-]", _KLAPOTKE),
+         ("[c:1][NH2]>>[c:1][N+](=O)[O-]", _OLAH_NITRATION),
+         ("[c:1][NH2]>>[c:1][N+](=O)[O-]", _ZEMAN),
+     ],
      (0, +1, +1, -1),
-     "Ar–NH2 → Ar–NO2 (oxidation).",
-     _KLAPOTKE),
+     "Ar–NH2 → Ar–NO2 (oxidation)."),
     ("amino_to_azide",
-     "[c:1][NH2]>>[c:1]N=[N+]=[N-]",
+     [
+         ("[c:1][NH2]>>[c:1]N=[N+]=[N-]", _BRASE),
+         ("[c:1][NH2]>>[c:1]N=[N+]=[N-]", _KATRITZKY),
+         ("[c:1][NH2]>>[c:1]N=[N+]=[N-]", _KLAPOTKE),
+     ],
      (-1, 0, 0, +1),
-     "Ar–NH2 → Ar–N3 (diazotization).",
-     "Bräse et al., Angew. Chem. Int. Ed. 44, 5188 (2005)"),
+     "Ar–NH2 → Ar–N3 (diazotization)."),
     ("halogen_Br_to_nitro",
-     "[c:1]Br>>[c:1][N+](=O)[O-]",
+     [
+         ("[c:1]Br>>[c:1][N+](=O)[O-]", _KLAPOTKE),
+         ("[c:1]Br>>[c:1][N+](=O)[O-]", _OLAH_NITRATION),
+         ("[c:1]Br>>[c:1][N+](=O)[O-]", _ZEMAN),
+     ],
      (-1, +1, +1, +1),
-     "Ar–Br → Ar–NO2 (lighter, more energetic).",
-     _KLAPOTKE),
+     "Ar–Br → Ar–NO2 (lighter, more energetic)."),
     ("halogen_I_to_azide",
-     "[c:1]I>>[c:1]N=[N+]=[N-]",
+     [
+         ("[c:1]I>>[c:1]N=[N+]=[N-]", _KATRITZKY),
+         ("[c:1]I>>[c:1]N=[N+]=[N-]", _BRASE),
+         ("[c:1]I>>[c:1]N=[N+]=[N-]", _KLAPOTKE),
+     ],
      (-1, +1, +1, +1),
-     "Ar–I → Ar–N3.",
-     "Katritzky et al., Chem. Rev. 110, 2709 (2010)"),
+     "Ar–I → Ar–N3."),
 
-    # --- Removals (negative deltas) -----------------------------------------
+    # --- Removals -----------------------------------------------------------
     ("remove_nitro_arom",
-     "[c:1][N+](=O)[O-]>>[c:1][H]",
+     [
+         ("[c:1][N+](=O)[O-]>>[c:1][H]", _GROUP_ADD),
+         ("[c:1][N+](=O)[O-]>>[cH:1]", _KJ),
+         ("[c:1][N+](=O)[O-]>>[cH1:1]", _ZEMAN),
+     ],
      (-1, -1, -1, 0),
-     "Remove aromatic nitro group.",
-     _GROUP_ADD),
+     "Remove aromatic nitro group."),
     ("remove_bromo_arom",
-     "[c:1]Br>>[c:1][H]",
+     [
+         ("[c:1]Br>>[c:1][H]", _GROUP_ADD),
+         ("[c:1]Br>>[cH:1]", _SIKDER),
+         ("[c:1]Br>>[cH1:1]", _KLAPOTKE),
+     ],
      (-1, 0, 0, 0),
-     "Remove aromatic Br.",
-     _GROUP_ADD),
+     "Remove aromatic Br."),
     ("remove_azide_arom",
-     "[c:1]N=[N+]=[N-]>>[c:1][H]",
+     [
+         ("[c:1]N=[N+]=[N-]>>[c:1][H]", _GROUP_ADD),
+         ("[c:1]N=[N+]=[N-]>>[cH:1]", _BRASE),
+         ("[c:1]N=[N+]=[N-]>>[cH1:1]", _KATRITZKY),
+     ],
      (0, 0, 0, -1),
-     "Remove aromatic azide.",
-     _GROUP_ADD),
+     "Remove aromatic azide."),
     ("nitro_to_methyl_arom",
-     "[c:1][N+](=O)[O-]>>[c:1]C",
+     [
+         ("[c:1][N+](=O)[O-]>>[c:1]C", _GROUP_ADD),
+         ("[c:1][N+](=O)[O-]>>[c:1]C", _KLAPOTKE),
+         ("[c:1][N+](=O)[O-]>>[c:1]C", _AGRAWAL),
+     ],
      (-1, -1, -1, -1),
-     "Ar–NO2 → Ar–CH3 (downgrade to alkyl).",
-     _GROUP_ADD),
+     "Ar–NO2 → Ar–CH3 (downgrade to alkyl)."),
     ("nitramine_to_amine",
-     "[N:1]([N+](=O)[O-])>>[N:1][H]",
+     [
+         ("[N:1]([N+](=O)[O-])>>[N:1][H]", _GROUP_ADD),
+         ("[N:1]([N+](=O)[O-])>>[N:1][H]", _KLAPOTKE),
+         ("[N:1]([N+](=O)[O-])>>[N:1][H]", _AGRAWAL),
+     ],
      (0, 0, -1, -1),
-     "Nitramine N–NO2 → amine N–H.",
-     _GROUP_ADD),
+     "Nitramine N–NO2 → amine N–H."),
     ("methyl_to_H",
-     "[cX3:1][CH3]>>[cX3:1][H]",
+     [
+         ("[cX3:1][CH3]>>[cX3:1][H]", _GROUP_ADD),
+         ("[cX3:1][CH3]>>[cX3:1][H]", _KLAPOTKE),
+         ("[cX3:1][CH3]>>[cX3:1][H]", _POLITZER),
+     ],
      (-1, 0, -1, +1),
-     "Ar–CH3 → Ar–H.",
-     _GROUP_ADD),
+     "Ar–CH3 → Ar–H."),
 ]
 
 
@@ -247,21 +370,35 @@ _PRIMITIVES: List[Tuple[str, Optional[str], Tuple[int, int, int, int], str, str]
 # ---------------------------------------------------------------------------
 
 def _validate_primitives() -> None:
-    for name, smarts, delta, desc, _src in _PRIMITIVES:
-        if smarts is None:
-            continue  # identity
-        rxn = AllChem.ReactionFromSmarts(smarts)
-        if rxn is None:
+    for name, variants, delta, _desc in _PRIMITIVE_ROWS:
+        if name != "identity" and len(variants) != 3:
             raise ImportError(
-                f"strategy_pool: primitive '{name}' has invalid SMARTS "
-                f"({smarts!r})"
+                f"strategy_pool: primitive '{name}' must declare exactly "
+                f"three SMARTS variants (+ sources), got {len(variants)}"
             )
-        if rxn.GetNumReactantTemplates() != 1 or rxn.GetNumProductTemplates() != 1:
+        if name == "identity" and variants != [(None, "N/A")]:
             raise ImportError(
-                f"strategy_pool: primitive '{name}' must have exactly one "
-                f"reactant and one product template; got "
-                f"{rxn.GetNumReactantTemplates()} / {rxn.GetNumProductTemplates()}"
+                "strategy_pool: identity primitive expects a single [(None, 'N/A')]"
             )
+
+        for smarts, variant_src in variants:
+            if smarts is None:
+                continue
+
+            rxn = AllChem.ReactionFromSmarts(smarts)
+            if rxn is None:
+                raise ImportError(
+                    f"strategy_pool: primitive '{name}' variant has invalid SMARTS "
+                    f"({variant_src}: {smarts!r})"
+                )
+            if rxn.GetNumReactantTemplates() != 1 or rxn.GetNumProductTemplates() != 1:
+                raise ImportError(
+                    f"strategy_pool: primitive '{name}' variant must have exactly "
+                    f"one reactant / one product template; got "
+                    f"{rxn.GetNumReactantTemplates()} / {rxn.GetNumProductTemplates()} "
+                    f"({variant_src}: {smarts!r})"
+                )
+
         for d in delta:
             if d not in (-1, 0, +1):
                 raise ImportError(
@@ -330,27 +467,33 @@ def _build_strategy_pool() -> Dict[Tuple[int, int, int, int], dict]:
                     target = (d1, d2, d3, d4)
                     if target == (0, 0, 0, 0):
                         # Force identity for the true no-op tuple.
-                        name = "identity"
-                        smarts, delta, desc, src = None, (0, 0, 0, 0), \
-                            "No modification required (all properties on target).", "N/A"
+                        pool[target] = {
+                            'primitive': 'identity',
+                            'variants': [{'smarts': None, 'source': 'N/A'}],
+                            'delta': (0, 0, 0, 0),
+                            'description': (
+                                "No modification required (all properties on target)."
+                            ),
+                        }
                     else:
                         best = None
-                        for prim_name, prim_smarts, prim_delta, prim_desc, prim_src in _PRIMITIVES:
+                        for prim_name, prim_variants, prim_delta, prim_desc in _PRIMITIVE_ROWS:
                             if prim_name == "identity":
                                 continue  # identity only valid for (0,0,0,0)
                             dist = _l1(prim_delta, target)
                             prio = _PRIORITY.get(prim_name, 1000)
                             key = (dist, prio)
                             if best is None or key < best[0]:
-                                best = (key, prim_name, prim_smarts, prim_delta, prim_desc, prim_src)
-                        _, name, smarts, delta, desc, src = best
-                    pool[target] = {
-                        'primitive': name,
-                        'smarts': smarts,
-                        'delta': delta,
-                        'description': desc,
-                        'source': src,
-                    }
+                                best = (key, prim_name, prim_variants, prim_delta, prim_desc)
+                        _, name, variants, delta, desc = best
+                        pool[target] = {
+                            'primitive': name,
+                            'variants': [
+                                {'smarts': s, 'source': sr} for s, sr in variants
+                            ],
+                            'delta': delta,
+                            'description': desc,
+                        }
     return pool
 
 
@@ -390,20 +533,40 @@ class StrategyPoolModifier:
     def get_strategy(self, property_gap: Dict[str, float]) -> dict:
         key = self.get_strategy_key(property_gap)
         strategy = self.pool.get(key, self.pool[(0, 0, 0, 0)])
-        logger.info(f"Strategy for {key}: {strategy['primitive']} — {strategy['description']}")
+        nvar = len(strategy.get('variants', ()))
+        logger.info(
+            f"Strategy for {key}: {strategy['primitive']} — "
+            f"{strategy['description']} ({nvar} literature variant(s))"
+        )
         return strategy
 
     def apply_strategy(self, smiles: str, strategy: dict) -> List[str]:
-        smarts = strategy.get('smarts')
+        variants_list = strategy.get('variants')
+        if variants_list:
+            viable = [v for v in variants_list if v.get('smarts') is not None]
+        else:
+            # Backward compatibility with flat strategy dicts.
+            leg = strategy.get('smarts')
+            viable = (
+                [{'smarts': leg, 'source': strategy.get('source', '')}]
+                if leg is not None
+                else []
+            )
+
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
             return []
 
-        # Identity primitive: nothing to do.
-        if smarts is None:
+        if not viable:
             return []
 
+        choice = random.choice(viable)
+        smarts = choice['smarts']
         results: List[str] = []
+        logger.debug(
+            "Literature variant: %s",
+            str(choice.get("source", ""))[:200],
+        )
         try:
             rxn = AllChem.ReactionFromSmarts(smarts)
             if rxn is None:
